@@ -642,6 +642,12 @@
 
   form.addEventListener('submit', (e) => { e.preventDefault(); gerar('baixar'); });
   $('#btnVer').addEventListener('click', () => gerar('ver'));
+  // Carimbo de cópia: abre o PDF pronto na pré-visualização (para ver e imprimir).
+  $('#btnCarimbo').addEventListener('click', () => {
+    $('#quadroPrevia').src = 'modelos/carimbo-copia-extraida-do-original.pdf';
+    $('#previa').hidden = false;
+    $('#previa').scrollIntoView({ behavior: 'smooth' });
+  });
   $('#btnWord').addEventListener('click', () => {
     baixarWord().catch(() => alert('Não foi possível gerar o arquivo do Word. Tente de novo ou baixe o PDF.'));
   });

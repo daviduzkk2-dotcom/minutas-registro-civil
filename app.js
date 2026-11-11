@@ -1,0 +1,474 @@
+/* Minutas do Registro Civil — tudo roda no navegador; nada é gravado (sem localStorage, cookies ou servidor). */
+(function () {
+  'use strict';
+
+  const form = document.getElementById('form');
+  const $ = (sel, raiz = document) => raiz.querySelector(sel);
+  const campo = (nome) => form.elements[nome];
+
+  // ---------- Blocos de endereço (requerente e testemunhas) ----------
+  const tpl = document.getElementById('tplEndereco');
+  document.querySelectorAll('.endereco').forEach((caixa) => {
+    const p = caixa.dataset.pessoa;
+    caixa.appendChild(tpl.content.cloneNode(true));
+    caixa.querySelectorAll('[data-campo]').forEach((el) => {
+      if (el.tagName === 'INPUT') el.name = `${p}_${el.dataset.campo}`;
+    });
+    const cep = caixa.querySelector('[data-campo="cep"]');
+    const status = caixa.querySelector('[data-campo="cepStatus"]');
+    const cpf = caixa.querySelector('[data-campo="cpf"]');
+    cpf.addEventListener('input', () => { cpf.value = mascaraCPF(cpf.value); cpf.classList.remove('invalido'); });
+    cpf.addEventListener('blur', () => { if (cpf.value && !cpfValido(cpf.value)) cpf.classList.add('invalido'); });
+    cep.addEventListener('input', () => {
+      cep.value = mascaraCEP(cep.value);
+      if (cep.value.replace(/\D/g, '').length === 8) buscarCEP(p, cep.value, status);
+      else status.textContent = '';
+    });
+  });
+
+  function mascaraCPF(v) {
+    v = v.replace(/\D/g, '').slice(0, 11);
+    let s = v.slice(0, 3);
+    if (v.length > 3) s += '.' + v.slice(3, 6);
+    if (v.length > 6) s += '.' + v.slice(6, 9);
+    if (v.length > 9) s += '-' + v.slice(9);
+    return s;
+  }
+  function mascaraCEP(v) {
+    v = v.replace(/\D/g, '').slice(0, 8);
+    return v.length > 5 ? `${v.slice(0, 5)}-${v.slice(5)}` : v;
+  }
+  function cpfValido(v) {
+    const d = v.replace(/\D/g, '');
+    if (d.length !== 11 || /^(\d)\1+$/.test(d)) return false;
+    for (let t = 9; t < 11; t++) {
+      let s = 0;
+      for (let i = 0; i < t; i++) s += +d[i] * (t + 1 - i);
+      if (((s * 10) % 11) % 10 !== +d[t]) return false;
+    }
+    return true;
+  }
+
+  let ultimoCEP = {};
+  async function buscarCEP(p, cep, status) {
+    const n = cep.replace(/\D/g, '');
+    if (ultimoCEP[p] === n) return;
+    ultimoCEP[p] = n;
+    status.textContent = 'Buscando endereço…';
+    try {
+      const r = await fetch(`https://viacep.com.br/ws/${n}/json/`, { referrerPolicy: 'no-referrer', cache: 'no-store' });
+      const j = await r.json();
+      if (j.erro) throw new Error('não encontrado');
+      campo(`${p}_logradouro`).value = j.logradouro || '';
+      campo(`${p}_bairro`).value = j.bairro || '';
+      campo(`${p}_cidade`).value = j.localidade || '';
+      campo(`${p}_uf`).value = j.uf || '';
+      status.textContent = j.logradouro ? 'Endereço preenchido. Falta o número.' : 'CEP geral da cidade: digite rua e bairro.';
+      (j.logradouro ? campo(`${p}_numero`) : campo(`${p}_logradouro`)).focus();
+    } catch (e) {
+      ultimoCEP[p] = null;
+      status.textContent = 'CEP não encontrado. Preencha o endereço à mão.';
+    }
+  }
+
+  // ---------- Modelo e tipo de livro ----------
+  function atualizarModelo() {
+    const comTest = campo('modelo').value === 'testemunhas';
+    $('#blocoTestemunhas').hidden = !comTest;
+  }
+  function atualizarLivro() {
+    const t = campo('livroTipo').value;
+    const casamento = t.startsWith('B');
+    $('#lblRegistrado').firstChild.textContent = casamento ? 'Nome do 1º contraente ' : (t.startsWith('C') ? 'Nome do falecido ' : 'Nome do registrado ');
+    if (t === 'C AUX') $('#lblRegistrado').firstChild.textContent = 'Nome do natimorto (ou dos pais) ';
+    $('#lblRegistrado2').hidden = !casamento;
+  }
+  form.querySelectorAll('[name="modelo"]').forEach((r) => r.addEventListener('change', atualizarModelo));
+  campo('livroTipo').addEventListener('change', atualizarLivro);
+
+  // ---------- Caixa de escolha com pesquisa ----------
+  const ICONE_LUPA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+  const semAcento = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const abertos = new Set();
+
+  function criarCombo(raiz, { vazio, aoEscolher }) {
+    raiz.innerHTML =
+      `<button type="button" class="combo-botao" aria-haspopup="listbox"><span class="txt vazio">${esc(vazio)}</span></button>` +
+      `<div class="combo-painel" hidden><div class="combo-busca"><input type="text" placeholder="Pesquisar…" autocomplete="off" aria-label="Pesquisar">${ICONE_LUPA}</div>` +
+      '<ul class="combo-lista" role="listbox"></ul></div>';
+    const botao = $('.combo-botao', raiz), painel = $('.combo-painel', raiz), busca = $('input', painel), ul = $('ul', painel);
+    let itens = [], filtrados = [], foco = 0, valor = '';
+    const LIMITE = 400;
+
+    function desenhar() {
+      const q = semAcento(busca.value);
+      const palavras = q.split(/\s+/).filter(Boolean);
+      filtrados = itens.filter((it) => palavras.every((p) => it.busca.includes(p)));
+      if (q) {
+        // Primeiro o que começa com o texto digitado, depois início de palavra, depois o resto.
+        const nota = (it) => {
+          const r = semAcento(it.rotulo).replace(/^\d+ - /, '');
+          if (r.startsWith(q)) return 0;
+          if ((' ' + r).includes(' ' + q)) return 1;
+          return palavras.every((p) => (' ' + r).includes(' ' + p)) ? 2 : 3;
+        };
+        filtrados = filtrados.map((it, i) => [nota(it), i, it]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
+      }
+      foco = Math.max(0, filtrados.findIndex((it) => it.valor === valor));
+      if (q) foco = 0;
+      const mostrar = filtrados.slice(0, LIMITE);
+      ul.innerHTML = mostrar.length
+        ? mostrar.map((it, i) => `<li role="option" data-i="${i}" class="${i === foco ? 'foco' : ''} ${it.valor === valor ? 'marcado' : ''}">${esc(it.rotulo)}${it.detalhe ? `<small>${esc(it.detalhe)}</small>` : ''}</li>`).join('') +
+          (filtrados.length > LIMITE ? `<li class="nada">… continue digitando para ver mais (${filtrados.length})</li>` : '')
+        : '<li class="nada">Nada encontrado</li>';
+      const atual = ul.querySelector('.foco');
+      if (atual) atual.scrollIntoView({ block: 'nearest' });
+    }
+    function abrir() {
+      if (botao.disabled) return;
+      abertos.forEach((c) => c !== api && c.fechar());
+      painel.hidden = false; raiz.classList.add('aberto'); abertos.add(api);
+      busca.value = ''; desenhar(); busca.focus();
+    }
+    function fechar() { painel.hidden = true; raiz.classList.remove('aberto'); abertos.delete(api); }
+    function escolher(it) {
+      valor = it ? it.valor : '';
+      const txt = $('.txt', botao);
+      txt.textContent = it ? it.rotulo : vazio;
+      txt.classList.toggle('vazio', !it);
+      botao.title = it && it.detalhe ? it.detalhe : '';
+      fechar();
+      aoEscolher(it);
+    }
+    function moverFoco(d) {
+      const n = Math.min(filtrados.length, LIMITE);
+      if (!n) return;
+      foco = (foco + d + n) % n;
+      ul.querySelectorAll('li[data-i]').forEach((li) => li.classList.toggle('foco', +li.dataset.i === foco));
+      const atual = ul.querySelector('.foco'); if (atual) atual.scrollIntoView({ block: 'nearest' });
+    }
+    botao.addEventListener('click', () => (painel.hidden ? abrir() : (fechar(), botao.focus())));
+    botao.addEventListener('keydown', (e) => {
+      if (/^(ArrowDown|Enter| )$/.test(e.key) || (e.key.length === 1 && /\S/.test(e.key))) {
+        if (e.key.length === 1 && e.key !== ' ') { abrir(); busca.value = e.key; desenhar(); e.preventDefault(); return; }
+        e.preventDefault(); abrir();
+      }
+    });
+    busca.addEventListener('input', desenhar);
+    busca.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); moverFoco(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); moverFoco(-1); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (filtrados[foco]) escolher(filtrados[foco]); botao.focus(); }
+      else if (e.key === 'Escape') { e.preventDefault(); fechar(); botao.focus(); }
+      else if (e.key === 'Tab') fechar();
+    });
+    ul.addEventListener('mousedown', (e) => e.preventDefault());
+    ul.addEventListener('click', (e) => {
+      const li = e.target.closest('li[data-i]');
+      if (li) { escolher(filtrados[+li.dataset.i]); botao.focus(); }
+    });
+    const api = {
+      definirItens(lista, novoVazio) {
+        itens = lista.map((it) => Object.assign({ busca: semAcento(`${it.rotulo} ${it.detalhe || ''}`) }, it));
+        if (novoVazio) vazio = novoVazio;
+        botao.disabled = !itens.length;
+        escolher(null);
+      },
+      escolherValor(v) { escolher(itens.find((it) => it.valor === v) || null); },
+      get valor() { return valor; },
+      fechar,
+    };
+    return api;
+  }
+  document.addEventListener('mousedown', (e) => {
+    abertos.forEach((c) => { if (!e.target.closest('.combo')) c.fechar(); });
+  });
+
+  // ---------- Cartórios (CNJ – Justiça Aberta) ----------
+  let base = null;
+  const selUF = $('#uf'), txtDest = $('#destinatario');
+  let cidadeAtual = null;
+  const OUTRO = { valor: 'outro', rotulo: 'Outro cartório (escrever o destinatário)', detalhe: 'Use se o cartório não estiver na lista' };
+
+  const comboCartorio = criarCombo($('#comboCartorio'), {
+    vazio: 'Escolha a cidade primeiro',
+    aoEscolher: (it) => montarDestinatario(it),
+  });
+  const comboCidade = criarCombo($('#comboCidade'), {
+    vazio: 'Selecione',
+    aoEscolher: (it) => { cidadeAtual = it ? it.valor : null; preencherCartorios(); },
+  });
+
+  fetch('dados/cartorios-rcpn.json').then((r) => r.json()).then((j) => {
+    base = j;
+    Object.keys(j.uf).forEach((uf) => selUF.add(new Option(uf, uf, uf === 'SP', uf === 'SP')));
+    preencherCidades();
+    $('#fonteCartorios').textContent = `Lista: ${j.fonte}, baixada em ${j.baixado_em.split('-').reverse().join('/')}. Se o cartório não aparecer, escolha “Outro cartório” e escreva o destinatário.`;
+  }).catch(() => {
+    $('#fonteCartorios').textContent = 'Não foi possível carregar a lista de cartórios. Escreva o destinatário à mão.';
+  });
+
+  function preencherCidades() {
+    if (!base) return;
+    const cidades = Object.keys(base.uf[selUF.value] || {});
+    comboCidade.definirItens(cidades.map((c) => ({ valor: c, rotulo: c })), 'Selecione');
+  }
+  function preencherCartorios() {
+    txtDest.value = '';
+    if (!cidadeAtual) { comboCartorio.definirItens([], 'Escolha a cidade primeiro'); return; }
+    const lista = base.uf[selUF.value][cidadeAtual];
+    const itens = lista.map(([cns, resumo, nome]) => ({
+      valor: cns,
+      rotulo: `${cns} - ${cidadeAtual}${resumo ? ` - ${resumo}` : ''}`,
+      detalhe: nome,
+      resumo, nome,
+    }));
+    itens.push(OUTRO);
+    comboCartorio.definirItens(itens, 'Selecione');
+    if (lista.length === 1) comboCartorio.escolherValor(lista[0][0]);
+  }
+  function montarDestinatario(it) {
+    if (!it) { txtDest.value = ''; return; }
+    if (it.valor === 'outro') { txtDest.value = ''; txtDest.focus(); return; }
+    const uf = selUF.value;
+    const cid = cidadeAtual.toLocaleUpperCase('pt-BR');
+    const sozinho = base.uf[uf][cidadeAtual].length === 1;
+    // O CNS não vai para o PDF: o destinatário leva só cidade e subdistrito/distrito.
+    if (it.resumo) txtDest.value = `OFICIAL DE REGISTRO CIVIL DAS PESSOAS NATURAIS DE ${cid}/${uf} – ${it.resumo.toLocaleUpperCase('pt-BR')}`;
+    else if (sozinho) txtDest.value = `OFICIAL DE REGISTRO CIVIL DAS PESSOAS NATURAIS DE ${cid}/${uf}`;
+    else txtDest.value = `${it.nome.toLocaleUpperCase('pt-BR')} – ${cid}/${uf}`;
+  }
+  selUF.addEventListener('change', () => { cidadeAtual = null; preencherCidades(); });
+
+  // ---------- Datas ----------
+  function hojeISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  function dataExtenso(iso) {
+    const [a, m, d] = iso.split('-');
+    return `${d} de ${MESES[+m - 1]} de ${a}`;
+  }
+  $('#data').value = hojeISO();
+
+  // ---------- Imagens do timbrado ----------
+  const imagens = {};
+  ['logo', 'oficial'].forEach((n) => {
+    fetch(`img/${n}.png`).then((r) => r.blob()).then((b) => new Promise((ok) => {
+      const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.readAsDataURL(b);
+    })).then((url) => { imagens[n] = url; });
+  });
+
+  // ---------- Leitura e validação ----------
+  const v = (n) => (campo(n) ? campo(n).value.trim() : '');
+  const up = (s) => s.toLocaleUpperCase('pt-BR');
+
+  function pessoa(p, nomeCampo) {
+    return {
+      nome: up(v(nomeCampo)),
+      cpf: v(`${p}_cpf`),
+      cep: v(`${p}_cep`), numero: v(`${p}_numero`), complemento: v(`${p}_complemento`),
+      logradouro: v(`${p}_logradouro`), bairro: v(`${p}_bairro`), cidade: v(`${p}_cidade`), uf: up(v(`${p}_uf`)),
+    };
+  }
+  function enderecoTexto(x) {
+    let s = x.logradouro;
+    if (x.numero) s += `, ${x.numero}`;
+    if (x.complemento) s += `, ${x.complemento}`;
+    if (x.bairro) s += ` - ${x.bairro}`;
+    if (x.cidade) s += `, ${x.cidade}`;
+    if (x.uf) s += ` - ${x.uf}`;
+    return s;
+  }
+
+  function coletar() {
+    const erros = [];
+    form.querySelectorAll('.invalido').forEach((e) => e.classList.remove('invalido'));
+    const exigir = (nome, rotulo) => {
+      if (!v(nome)) { erros.push(rotulo); if (campo(nome)) campo(nome).classList.add('invalido'); }
+    };
+    const d = {
+      modelo: campo('modelo').value,
+      livroTipo: v('livroTipo'), livro: v('livro'), folha: v('folha'), termo: v('termo'),
+      registrado1: up(v('registrado1')), registrado2: up(v('registrado2')),
+      destinatario: up(v('destinatario')),
+      req: pessoa('req', 'reqNome'), reqQualidade: v('reqQualidade'),
+      t1: pessoa('t1', 't1Nome'), t2: pessoa('t2', 't2Nome'),
+      local: up(v('localAssinatura')), data: v('data'),
+    };
+    const casamento = d.livroTipo.startsWith('B');
+    exigir('livro', 'Livro nº'); exigir('folha', 'Folha'); exigir('termo', 'Termo nº');
+    exigir('registrado1', casamento ? 'Nome do 1º contraente' : 'Nome do registrado');
+    if (casamento) exigir('registrado2', 'Nome do 2º contraente');
+    exigir('destinatario', 'Cartório de destino (destinatário)');
+    exigir('reqNome', 'Nome do requerente');
+    const pessoas = [['req', 'requerente']];
+    if (d.modelo === 'testemunhas') {
+      exigir('t1Nome', 'Nome da testemunha 1'); exigir('t2Nome', 'Nome da testemunha 2');
+      pessoas.push(['t1', 'testemunha 1'], ['t2', 'testemunha 2']);
+    }
+    pessoas.forEach(([p, r]) => {
+      exigir(`${p}_logradouro`, `Endereço do(a) ${r}`);
+      exigir(`${p}_numero`, `Número do endereço do(a) ${r}`);
+      const cpf = v(`${p}_cpf`);
+      const cpfObrigatorio = p !== 'req' || d.modelo === 'simples';
+      if (!cpf && cpfObrigatorio) { erros.push(`CPF do(a) ${r}`); campo(`${p}_cpf`).classList.add('invalido'); }
+      if (cpf && !cpfValido(cpf)) { erros.push(`CPF do(a) ${r} inválido (confira os números)`); campo(`${p}_cpf`).classList.add('invalido'); }
+    });
+    exigir('localAssinatura', 'Cidade da assinatura'); exigir('data', 'Data');
+    return { d, erros };
+  }
+
+  function mostrarErros(erros) {
+    const caixa = $('#erros');
+    if (!erros.length) { caixa.hidden = true; return; }
+    caixa.innerHTML = '<b>Falta preencher ou corrigir:</b><ul>' + erros.map((e) => `<li>${e}</li>`).join('') + '</ul>';
+    caixa.hidden = false;
+    const primeiro = form.querySelector('.invalido');
+    if (primeiro) primeiro.focus();
+  }
+
+  // ---------- Montagem do PDF ----------
+  const CERTIDAO = { A: 'NASCIMENTO', B: 'CASAMENTO', 'B AUX': 'CASAMENTO', C: 'ÓBITO', 'C AUX': 'NATIMORTO' };
+  const pad = (s, n) => (/^\d+$/.test(s) ? s.padStart(n, '0') : up(s));
+  const RECUO = 70; // recuo de primeira linha (pt)
+
+  // Assinatura: duas linhas (a pessoa assina duas vezes) e, embaixo, a qualificação.
+  function assinatura(x, rotulo, cpfOpcional, largura = 320, espaco = 30, entre = 26) {
+    const linha = (topo) => ({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: largura, y2: 0, lineWidth: 0.8 }], margin: [0, topo, 0, 3] });
+    const linhas = [
+      linha(espaco),
+      linha(entre),
+      { text: [{ text: rotulo ? `${rotulo}: ` : '', bold: true }, { text: x.nome, bold: true }, x.qualidade ? ` (${x.qualidade})` : ''] },
+    ];
+    if (x.cpf || !cpfOpcional) linhas.push({ text: `CPF: ${x.cpf}` });
+    linhas.push({ text: `ENDEREÇO: ${enderecoTexto(x)}` });
+    return { stack: linhas, fontSize: 9.5, unbreakable: true };
+  }
+
+  function documento(d) {
+    const tipoCert = CERTIDAO[d.livroTipo];
+    const referente = d.livroTipo.startsWith('B') ? `${d.registrado1} E ${d.registrado2}` : d.registrado1;
+    const corpo =
+      'DECLARO, PARA TODOS OS FINS E EFEITOS DE DIREITO, NOS TERMOS DO ARTIGO 30, PARÁGRAFOS 1º E 2º, DA LEI Nº 6.015/73, ' +
+      'QUE SOU RECONHECIDAMENTE POBRE, NA ACEPÇÃO JURÍDICA CIVIL DO TERMO, NÃO POSSUINDO RECURSOS SUFICIENTES PARA VIVER ' +
+      'E MANTER MINHA FAMÍLIA, RAZÃO PELA QUAL NÃO TENHO CONDIÇÕES FINANCEIRAS PARA ARCAR COM AS DESPESAS DECORRENTES DA ' +
+      `EXTRAÇÃO DA 2ª VIA DA CERTIDÃO DE ${tipoCert} REFERENTE A `;
+    const fim = ' DECLARO, MAIS E FINALMENTE, QUE TENHO REAL CONHECIMENTO DE QUE A FALSIDADE DO SUPRA DECLARADO ' +
+      'ACARRETARÁ CONTRA A MINHA PESSOA OS EFEITOS DA RESPONSABILIDADE CIVIL E PENAL.';
+
+    const req = Object.assign({}, d.req, { qualidade: d.reqQualidade ? up(d.reqQualidade) : '' });
+    const comTest = d.modelo === 'testemunhas';
+
+    const content = [
+      { text: d.destinatario, bold: true, fontSize: 10.5, margin: [0, 0, 0, comTest ? 12 : 18] },
+      { text: 'D E C L A R A Ç Ã O', bold: true, alignment: 'center', fontSize: 13, margin: comTest ? [0, 10, 0, 22] : [0, 14, 0, 30] },
+      { text: [corpo, { text: referente + '.', bold: true }, fim], alignment: 'justify', leadingIndent: RECUO, lineHeight: comTest ? 1.25 : 1.35 },
+      { text: 'POR SER A EXPRESSÃO DA VERDADE, FIRMO A PRESENTE.', leadingIndent: RECUO, margin: [0, 8, 0, 0] },
+      { text: `${d.local}, em ${dataExtenso(d.data)}.`, leadingIndent: RECUO, margin: [0, comTest ? 12 : 16, 0, 0] },
+      {
+        stack: [
+          `LIVRO ${d.livroTipo} ${pad(d.livro, 5)}`,
+          `FLS ${pad(d.folha, 3)}`,
+          `TERMO Nº ${pad(d.termo, 7)}`,
+        ],
+        bold: true, fontSize: 10, margin: [0, comTest ? 14 : 20, 0, 0],
+      },
+      { columns: [{ width: RECUO, text: '' }, assinatura(req, comTest ? 'REQUERENTE' : '', comTest, 320, comTest ? 24 : 30)] },
+    ];
+    if (comTest) {
+      content.push(
+        { text: 'EM RAZÃO DE O REQUERENTE NÃO ESTAR PORTANDO DOCUMENTO DE IDENTIFICAÇÃO, DUAS TESTEMUNHAS ASSINAM A PRESENTE PARA COMPROVAR SEU PEDIDO E SUA PRESENÇA.',
+          alignment: 'justify', fontSize: 10, margin: [0, 16, 0, 0] },
+        // Testemunhas lado a lado, cada uma com duas linhas.
+        { columns: [assinatura(d.t1, 'TESTEMUNHA 1', false, 222, 24), assinatura(d.t2, 'TESTEMUNHA 2', false, 222, 24)], columnGap: 20 },
+      );
+    }
+
+    const cabecalho = [];
+    if (imagens.logo) {
+      cabecalho.push({
+        margin: [40, 18, 40, 0],
+        columns: [
+          { image: imagens.logo, width: 120 },
+          { stack: [
+            { text: 'OFICIAL DE REGISTRO CIVIL DAS PESSOAS NATURAIS E DE INTERDIÇÕES E TUTELAS DA SEDE DA COMARCA DE CARAGUATATUBA, ESTADO DE SÃO PAULO',
+              alignment: 'center', fontSize: 8.5, bold: true, margin: [0, 8, 0, 6] },
+            imagens.oficial ? { image: imagens.oficial, width: 170, alignment: 'center' } : '',
+          ] },
+        ],
+        columnGap: 16,
+      });
+    }
+    // Linha divisória abaixo do cabeçalho
+    cabecalho.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.8, lineColor: '#555' }], margin: [40, 8, 40, 0] });
+
+    return {
+      pageSize: 'A4',
+      pageMargins: [70, 110, 60, 60],
+      info: { title: 'Declaração de pobreza', creator: 'Minutas do Registro Civil' },
+      header: () => cabecalho,
+      footer: () => ({
+        margin: [40, 18, 40, 0],
+        stack: [
+          // Linha divisória acima do rodapé
+          { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.8, lineColor: '#555' }], margin: [0, 0, 0, 6] },
+          { text: 'Av. Pernambuco, 150 – Jardim Primavera, Caraguatatuba – SP, CEP 11660-640 – Telefone: (12) 3883-9224',
+            alignment: 'center', fontSize: 8, color: '#444' },
+        ],
+      }),
+      defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.15 },
+      content,
+    };
+  }
+
+  function nomeArquivo(d) {
+    const base = d.registrado1.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    return `declaracao-pobreza-${base || 'minuta'}.pdf`;
+  }
+
+  let urlPrevia = null;
+  function gerar(acao) {
+    const { d, erros } = coletar();
+    mostrarErros(erros);
+    if (erros.length) return;
+    const pdf = pdfMake.createPdf(documento(d));
+    if (acao === 'baixar') {
+      pdf.download(nomeArquivo(d));
+    } else {
+      pdf.getBlob((blob) => {
+        if (urlPrevia) URL.revokeObjectURL(urlPrevia);
+        urlPrevia = URL.createObjectURL(blob);
+        $('#quadroPrevia').src = urlPrevia;
+        $('#previa').hidden = false;
+        $('#previa').scrollIntoView({ behavior: 'smooth' });
+      });
+    }
+  }
+
+  form.addEventListener('submit', (e) => { e.preventDefault(); gerar('baixar'); });
+  $('#btnVer').addEventListener('click', () => gerar('ver'));
+  $('#btnLimpar').addEventListener('click', () => {
+    if (!confirm('Apagar tudo o que foi preenchido?')) return;
+    form.reset();
+    form.querySelectorAll('.invalido').forEach((e) => e.classList.remove('invalido'));
+    form.querySelectorAll('[data-campo="cepStatus"]').forEach((e) => { e.textContent = ''; });
+    ultimoCEP = {};
+    $('#data').value = hojeISO();
+    if (urlPrevia) { URL.revokeObjectURL(urlPrevia); urlPrevia = null; }
+    $('#quadroPrevia').removeAttribute('src');
+    $('#previa').hidden = true;
+    $('#erros').hidden = true;
+    if (base) { selUF.value = 'SP'; cidadeAtual = null; preencherCidades(); }
+    txtDest.value = '';
+    atualizarModelo(); atualizarLivro();
+    window.scrollTo(0, 0);
+  });
+
+  // Ao recarregar, o navegador pode repor valores antigos: começa sempre limpo.
+  window.addEventListener('pageshow', () => { form.reset(); $('#data').value = hojeISO(); atualizarModelo(); atualizarLivro(); });
+  atualizarModelo();
+  atualizarLivro();
+})();

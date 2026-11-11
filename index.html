@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Minutas do Registro Civil</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topo">
+  <img src="img/logo.png" alt="Cartório de Registro Civil de Caraguatatuba" class="topo-logo">
+  <div>
+    <h1>Minutas</h1>
+    <p class="sub">Preencha, confira e baixe o PDF. Nada do que você digita é salvo: tudo fica só nesta aba e some ao fechar ou ao clicar em “Limpar”.</p>
+  </div>
+</header>
+
+<main>
+  <nav class="minutas" aria-label="Escolha a minuta">
+    <button type="button" class="aba ativa" data-minuta="pobreza">Declaração de pobreza – 2ª via de certidão</button>
+  </nav>
+
+  <form id="form" autocomplete="off" novalidate>
+    <!-- MODELO -->
+    <fieldset>
+      <legend>Modelo</legend>
+      <div class="opcoes">
+        <label class="opcao"><input type="radio" name="modelo" value="simples" checked> Requerente com documento</label>
+        <label class="opcao"><input type="radio" name="modelo" value="testemunhas"> Requerente <b>sem</b> documento (duas testemunhas)</label>
+      </div>
+    </fieldset>
+
+    <!-- CERTIDÃO -->
+    <fieldset>
+      <legend>Certidão pedida</legend>
+      <div class="grade g4">
+        <label>Tipo de livro
+          <select name="livroTipo" required>
+            <option value="A">A – Nascimento</option>
+            <option value="B">B – Casamento</option>
+            <option value="B AUX">B Auxiliar – Casamento religioso</option>
+            <option value="C">C – Óbito</option>
+            <option value="C AUX">C Auxiliar – Natimorto</option>
+          </select>
+        </label>
+        <label>Livro nº <input name="livro" inputmode="numeric" required placeholder="29"></label>
+        <label>Folha <input name="folha" inputmode="numeric" required placeholder="134"></label>
+        <label>Termo nº <input name="termo" inputmode="numeric" required placeholder="17661"></label>
+      </div>
+      <div class="grade g2" id="blocoRegistrado">
+        <label id="lblRegistrado">Nome do registrado <input name="registrado1" required></label>
+        <label id="lblRegistrado2" hidden>Nome do 2º contraente <input name="registrado2"></label>
+      </div>
+    </fieldset>
+
+    <!-- DESTINO -->
+    <fieldset>
+      <legend>Cartório que vai emitir a certidão</legend>
+      <div class="grade g-destino">
+        <label>Estado <select name="uf" id="uf"></select></label>
+        <div class="rotulo">Cidade <div class="combo" id="comboCidade"></div></div>
+        <div class="rotulo">Cartório <div class="combo" id="comboCartorio"></div></div>
+      </div>
+      <label>Destinatário (como sai no topo do PDF – pode corrigir)
+        <textarea name="destinatario" id="destinatario" rows="2" required></textarea>
+      </label>
+      <p class="dica" id="fonteCartorios"></p>
+    </fieldset>
+
+    <!-- REQUERENTE -->
+    <fieldset>
+      <legend>Requerente</legend>
+      <div class="grade g2">
+        <label>Nome completo <input name="reqNome" required></label>
+        <label>Qualidade (opcional)
+          <input name="reqQualidade" list="listaQualidade" placeholder="ex.: registrada, mãe, filho">
+          <datalist id="listaQualidade">
+            <option value="registrado"><option value="registrada"><option value="contraente">
+            <option value="mãe"><option value="pai"><option value="filho"><option value="filha">
+            <option value="cônjuge"><option value="irmão"><option value="irmã"><option value="neto"><option value="neta">
+          </datalist>
+        </label>
+      </div>
+      <div class="endereco" data-pessoa="req"></div>
+    </fieldset>
+
+    <!-- TESTEMUNHAS -->
+    <fieldset id="blocoTestemunhas" hidden>
+      <legend>Testemunhas</legend>
+      <h3>Testemunha 1</h3>
+      <label>Nome completo <input name="t1Nome"></label>
+      <div class="endereco" data-pessoa="t1"></div>
+      <h3>Testemunha 2</h3>
+      <label>Nome completo <input name="t2Nome"></label>
+      <div class="endereco" data-pessoa="t2"></div>
+    </fieldset>
+
+    <!-- LOCAL E DATA -->
+    <fieldset>
+      <legend>Local e data</legend>
+      <div class="grade g2">
+        <label>Cidade <input name="localAssinatura" value="CARAGUATATUBA" required></label>
+        <label>Data <input type="date" name="data" id="data" required></label>
+      </div>
+    </fieldset>
+
+    <div id="erros" class="erros" role="alert" hidden></div>
+
+    <div class="acoes">
+      <button type="button" id="btnVer" class="sec">Pré-visualizar</button>
+      <button type="submit" class="pri">Baixar PDF</button>
+      <button type="button" id="btnLimpar" class="perigo">Limpar tudo</button>
+    </div>
+  </form>
+
+  <section id="previa" hidden>
+    <h2>Pré-visualização</h2>
+    <iframe id="quadroPrevia" title="Pré-visualização do PDF"></iframe>
+  </section>
+</main>
+
+<footer class="rodape">
+  <p>Privacidade: o site não usa banco de dados, cookies, contas nem estatísticas de acesso. O PDF é montado no seu
+  próprio navegador. A única consulta externa é o CEP, enviado ao ViaCEP para completar o endereço (só o CEP, nada mais).</p>
+  <p>Lista de cartórios: <a href="https://justicaaberta.cnj.jus.br/" target="_blank" rel="noopener noreferrer">CNJ – Justiça Aberta</a>.</p>
+</footer>
+
+<template id="tplEndereco">
+  <div class="grade g-end1">
+    <label>CPF <input data-campo="cpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00"></label>
+    <label>CEP <input data-campo="cep" inputmode="numeric" maxlength="9" placeholder="00000-000"><small data-campo="cepStatus" class="dica"></small></label>
+    <label>Número <input data-campo="numero" placeholder="nº"></label>
+    <label>Complemento <input data-campo="complemento" placeholder="opcional"></label>
+  </div>
+  <div class="grade g-end2">
+    <label>Rua / logradouro <input data-campo="logradouro"></label>
+    <label>Bairro <input data-campo="bairro"></label>
+    <label>Cidade <input data-campo="cidade"></label>
+    <label>UF <input data-campo="uf" maxlength="2"></label>
+  </div>
+</template>
+
+<script src="vendor/pdfmake.min.js"></script>
+<script src="vendor/vfs_fonts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

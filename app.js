@@ -447,9 +447,178 @@
     };
   }
 
-  function nomeArquivo(d) {
+  function nomeArquivo(d, ext = 'pdf') {
     const base = d.registrado1.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    return `declaracao-pobreza-${base || 'minuta'}.pdf`;
+    return `declaracao-pobreza-${base || 'minuta'}.${ext}`;
+  }
+
+  // ---------- Montagem do Word (.docx), com o mesmo layout do PDF ----------
+  // Unidades do docx: twips (1 pt = 20) para recuos/espaços; meio-ponto para o tamanho da letra.
+  const pt = (n) => Math.round(n * 20);
+  let bufImagens = null;
+  async function carregarImagensWord() {
+    if (!bufImagens) {
+      const [logo, oficial] = await Promise.all(['logo', 'oficial'].map((n) => fetch(`img/${n}.png`).then((r) => r.arrayBuffer())));
+      bufImagens = { logo, oficial };
+    }
+    return bufImagens;
+  }
+
+  async function documentoWord(d) {
+    const X = window.docx;
+    const { Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, Header, Footer, TableLayoutType, VerticalAlign } = X;
+    const img = await carregarImagensWord();
+    const FONTE = 'Arial';
+    const LARG = 465; // largura útil (pt), igual ao PDF
+    const SEM_BORDA = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+    const semBordas = { top: SEM_BORDA, bottom: SEM_BORDA, left: SEM_BORDA, right: SEM_BORDA, insideHorizontal: SEM_BORDA, insideVertical: SEM_BORDA };
+    const LINHA = { style: BorderStyle.SINGLE, size: 6, color: '000000' };
+    const run = (text, o = {}) => new TextRun({ text, font: FONTE, ...o });
+    const p = (filhos, o = {}) => new Paragraph({ children: Array.isArray(filhos) ? filhos : [filhos], ...o });
+
+    const tipoCert = CERTIDAO[d.livroTipo];
+    const referente = d.livroTipo.startsWith('B') ? `${d.registrado1} E ${d.registrado2}` : d.registrado1;
+    const comTest = d.modelo === 'testemunhas';
+    const req = Object.assign({}, d.req, { qualidade: d.reqQualidade ? up(d.reqQualidade) : '' });
+    const T = 22; // 11 pt
+
+    // Linha de assinatura: parágrafo vazio com borda de baixo, do tamanho pedido.
+    const linhaAss = (antes, esquerda, largura, total) => p(run(''), {
+      spacing: { before: pt(antes), after: pt(3) },
+      indent: { left: pt(esquerda), right: pt(total - esquerda - largura) },
+      border: { bottom: LINHA },
+    });
+    const qualif = (x, rotulo, cpfOpcional, esquerda, larguraTotal, largura) => {
+      const o = { indent: { left: pt(esquerda), right: pt(larguraTotal - esquerda - largura) }, spacing: { after: 0 } };
+      const t = 19;
+      const out = [
+        p([run(rotulo ? `${rotulo}: ` : '', { bold: true, size: t }), run(x.nome, { bold: true, size: t }), run(x.qualidade ? ` (${x.qualidade})` : '', { size: t })], o),
+      ];
+      if (x.cpf || !cpfOpcional) out.push(p(run(`CPF: ${x.cpf}`, { size: t }), o));
+      out.push(p(run(`ENDEREÇO: ${enderecoTexto(x)}`, { size: t }), o));
+      return out;
+    };
+    // Separador mínimo: sem ele o Word funde as duas linhas (parágrafos vizinhos com a mesma borda).
+    const separador = () => p(run('', { size: 2 }), { spacing: { before: 0, after: 0, line: 20, lineRule: X.LineRuleType.EXACT } });
+    const assinaturaW = (x, rotulo, cpfOpcional, esquerda, larguraTotal, largura, espaco, entre, larguraTexto = largura) => [
+      linhaAss(espaco, esquerda, largura, larguraTotal),
+      separador(),
+      linhaAss(entre, esquerda, largura, larguraTotal),
+      ...qualif(x, rotulo, cpfOpcional, esquerda, larguraTotal, larguraTexto),
+    ];
+
+    const corpo = [
+      p(run(d.destinatario, { bold: true, size: 21 }), { spacing: { after: pt(comTest ? 12 : 18) } }),
+      p(run('D E C L A R A Ç Ã O', { bold: true, size: 26 }), { alignment: AlignmentType.CENTER, spacing: { before: pt(comTest ? 4 : 14), after: pt(comTest ? 14 : 30) } }),
+      p([
+        run('DECLARO, PARA TODOS OS FINS E EFEITOS DE DIREITO, NOS TERMOS DO ARTIGO 30, PARÁGRAFOS 1º E 2º, DA LEI Nº 6.015/73, ' +
+          'QUE SOU RECONHECIDAMENTE POBRE, NA ACEPÇÃO JURÍDICA CIVIL DO TERMO, NÃO POSSUINDO RECURSOS SUFICIENTES PARA VIVER ' +
+          'E MANTER MINHA FAMÍLIA, RAZÃO PELA QUAL NÃO TENHO CONDIÇÕES FINANCEIRAS PARA ARCAR COM AS DESPESAS DECORRENTES DA ' +
+          `EXTRAÇÃO DA 2ª VIA DA CERTIDÃO DE ${tipoCert} REFERENTE A `, { size: T }),
+        run(referente + '.', { bold: true, size: T }),
+        run(' DECLARO, MAIS E FINALMENTE, QUE TENHO REAL CONHECIMENTO DE QUE A FALSIDADE DO SUPRA DECLARADO ' +
+          'ACARRETARÁ CONTRA A MINHA PESSOA OS EFEITOS DA RESPONSABILIDADE CIVIL E PENAL.', { size: T }),
+      ], { alignment: AlignmentType.JUSTIFIED, indent: { firstLine: pt(RECUO) }, spacing: { line: comTest ? 288 : 324, after: 0 } }),
+      p(run('POR SER A EXPRESSÃO DA VERDADE, FIRMO A PRESENTE.', { size: T }), { indent: { firstLine: pt(RECUO) }, spacing: { before: pt(8), after: 0 } }),
+      p(run(`${d.local}, em ${dataExtenso(d.data)}.`, { size: T }), { indent: { firstLine: pt(RECUO) }, spacing: { before: pt(comTest ? 12 : 16), after: 0 } }),
+      p(run(`LIVRO ${d.livroTipo} ${pad(d.livro, 5)}`, { bold: true, size: 20 }), { spacing: { before: pt(comTest ? 10 : 20), after: 0 } }),
+      p(run(`FLS ${pad(d.folha, 3)}`, { bold: true, size: 20 }), { spacing: { after: 0 } }),
+      p(run(`TERMO Nº ${pad(d.termo, 7)}`, { bold: true, size: 20 }), { spacing: { after: 0 } }),
+      ...assinaturaW(req, comTest ? 'REQUERENTE' : '', comTest, RECUO, LARG, 320, comTest ? 18 : 30, comTest ? 22 : 26, LARG - RECUO),
+    ];
+
+    if (comTest) {
+      corpo.push(p(run('EM RAZÃO DE O REQUERENTE NÃO ESTAR PORTANDO DOCUMENTO DE IDENTIFICAÇÃO, DUAS TESTEMUNHAS ASSINAM A PRESENTE PARA COMPROVAR SEU PEDIDO E SUA PRESENÇA.', { size: 20 }),
+        { alignment: AlignmentType.JUSTIFIED, spacing: { before: pt(12), after: 0 } }));
+      const COL = 222.5;
+      const celula = (x, rotulo, margemDir) => new TableCell({
+        width: { size: pt(COL), type: WidthType.DXA },
+        borders: semBordas,
+        margins: { left: 0, right: pt(margemDir), top: 0, bottom: 0 },
+        children: assinaturaW(x, rotulo, false, 0, COL - margemDir, COL - margemDir, 20, 22),
+      });
+      corpo.push(new Table({
+        width: { size: pt(LARG), type: WidthType.DXA },
+        columnWidths: [pt(COL), pt(COL)],
+        layout: TableLayoutType.FIXED,
+        borders: semBordas,
+        rows: [new TableRow({ cantSplit: true, children: [celula(d.t1, 'TESTEMUNHA 1', 10), celula(d.t2, 'TESTEMUNHA 2', 0)] })],
+      }));
+    }
+
+    // Carimbo de certificação: caixa pequena à direita.
+    const LC = 150;
+    corpo.push(p(run(''), { spacing: { before: pt(comTest ? 4 : 24), after: 0 } }));
+    corpo.push(new Table({
+      width: { size: pt(LC), type: WidthType.DXA },
+      columnWidths: [pt(LC)],
+      layout: TableLayoutType.FIXED,
+      alignment: AlignmentType.RIGHT,
+      borders: { top: LINHA, bottom: LINHA, left: LINHA, right: LINHA, insideHorizontal: SEM_BORDA, insideVertical: SEM_BORDA },
+      rows: [new TableRow({ cantSplit: true, children: [new TableCell({
+        width: { size: pt(LC), type: WidthType.DXA },
+        margins: { top: pt(3), bottom: pt(3), left: pt(3), right: pt(3) },
+        verticalAlign: VerticalAlign.TOP,
+        children: [
+          p(run('CERTIFICO E DOU FÉ QUE ESTE DOCUMENTO FOI ASSINADO EM MINHA PRESENÇA.', { bold: true, size: 12 }), { alignment: AlignmentType.CENTER, spacing: { after: 0 } }),
+          p(run(`${d.local}, ${dataExtenso(d.data)}.`, { size: 12 }), { alignment: AlignmentType.CENTER, spacing: { before: pt(2), after: 0 } }),
+          p(run('', { size: 12 }), { spacing: { before: pt(14), after: pt(2) }, indent: { left: pt(10), right: pt(10) }, border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: '000000' } } }),
+        ],
+      })] })],
+    }));
+
+    // Cabeçalho (logo + nome do cartório + Oficial) com linha embaixo; rodapé com linha em cima.
+    const cab = new Header({ children: [
+      new Table({
+        width: { size: pt(LARG), type: WidthType.DXA },
+        columnWidths: [pt(136), pt(LARG - 136)],
+        layout: TableLayoutType.FIXED,
+        borders: semBordas,
+        rows: [new TableRow({ children: [
+          new TableCell({ width: { size: pt(136), type: WidthType.DXA }, borders: semBordas, verticalAlign: VerticalAlign.CENTER,
+            children: [p(new ImageRun({ data: img.logo, transformation: { width: 150, height: 65 } }))] }),
+          new TableCell({ width: { size: pt(LARG - 136), type: WidthType.DXA }, borders: semBordas, verticalAlign: VerticalAlign.CENTER, children: [
+            p(run('OFICIAL DE REGISTRO CIVIL DAS PESSOAS NATURAIS E DE INTERDIÇÕES E TUTELAS DA SEDE DA COMARCA DE CARAGUATATUBA, ESTADO DE SÃO PAULO', { bold: true, size: 16 }),
+              { alignment: AlignmentType.CENTER, spacing: { after: pt(4) } }),
+            p(new ImageRun({ data: img.oficial, transformation: { width: 210, height: 29 } }), { alignment: AlignmentType.CENTER, spacing: { after: 0 } }),
+          ] }),
+        ] })],
+      }),
+      p(run(''), { spacing: { before: 0, after: 0 }, border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: '555555' } } }),
+    ] });
+    const rod = new Footer({ children: [
+      p(run('Av. Pernambuco, 150 – Jardim Primavera, Caraguatatuba – SP, CEP 11660-640 – Telefone: (12) 3883-9224', { size: 16, color: '444444' }),
+        { alignment: AlignmentType.CENTER, border: { top: { style: BorderStyle.SINGLE, size: 6, color: '555555', space: 4 } } }),
+    ] });
+
+    return new X.Document({
+      creator: 'Minutas do Registro Civil',
+      title: 'Declaração de pobreza',
+      styles: { default: { document: { run: { font: FONTE, size: T } } } },
+      sections: [{
+        properties: {
+          page: {
+            size: { width: 11906, height: 16838 },
+            margin: { top: pt(105), bottom: pt(60), left: pt(RECUO), right: pt(60), header: pt(18), footer: pt(20) },
+          },
+        },
+        headers: { default: cab },
+        footers: { default: rod },
+        children: corpo,
+      }],
+    });
+  }
+
+  async function baixarWord() {
+    const { d, erros } = coletar();
+    mostrarErros(erros);
+    if (erros.length) return;
+    const blob = await window.docx.Packer.toBlob(await documentoWord(d));
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nomeArquivo(d, 'docx');
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
   let urlPrevia = null;
@@ -473,6 +642,9 @@
 
   form.addEventListener('submit', (e) => { e.preventDefault(); gerar('baixar'); });
   $('#btnVer').addEventListener('click', () => gerar('ver'));
+  $('#btnWord').addEventListener('click', () => {
+    baixarWord().catch(() => alert('Não foi possível gerar o arquivo do Word. Tente de novo ou baixe o PDF.'));
+  });
   $('#btnLimpar').addEventListener('click', () => {
     if (!confirm('Apagar tudo o que foi preenchido?')) return;
     form.reset();

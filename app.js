@@ -364,8 +364,8 @@
 
     const content = [
       { text: d.destinatario, bold: true, fontSize: 10.5, margin: [0, 0, 0, comTest ? 12 : 18] },
-      { text: 'D E C L A R A Ç Ã O', bold: true, alignment: 'center', fontSize: 13, margin: comTest ? [0, 10, 0, 22] : [0, 14, 0, 30] },
-      { text: [corpo, { text: referente + '.', bold: true }, fim], alignment: 'justify', leadingIndent: RECUO, lineHeight: comTest ? 1.25 : 1.35 },
+      { text: 'D E C L A R A Ç Ã O', bold: true, alignment: 'center', fontSize: 13, margin: comTest ? [0, 4, 0, 14] : [0, 14, 0, 30] },
+      { text: [corpo, { text: referente + '.', bold: true }, fim], alignment: 'justify', leadingIndent: RECUO, lineHeight: comTest ? 1.2 : 1.35 },
       { text: 'POR SER A EXPRESSÃO DA VERDADE, FIRMO A PRESENTE.', leadingIndent: RECUO, margin: [0, 8, 0, 0] },
       { text: `${d.local}, em ${dataExtenso(d.data)}.`, leadingIndent: RECUO, margin: [0, comTest ? 12 : 16, 0, 0] },
       {
@@ -374,18 +374,41 @@
           `FLS ${pad(d.folha, 3)}`,
           `TERMO Nº ${pad(d.termo, 7)}`,
         ],
-        bold: true, fontSize: 10, margin: [0, comTest ? 14 : 20, 0, 0],
+        bold: true, fontSize: 10, margin: [0, comTest ? 10 : 20, 0, 0],
       },
-      { columns: [{ width: RECUO, text: '' }, assinatura(req, comTest ? 'REQUERENTE' : '', comTest, 320, comTest ? 24 : 30)] },
+      { columns: [{ width: RECUO, text: '' }, assinatura(req, comTest ? 'REQUERENTE' : '', comTest, 320, comTest ? 18 : 30, comTest ? 22 : 26)] },
     ];
     if (comTest) {
       content.push(
         { text: 'EM RAZÃO DE O REQUERENTE NÃO ESTAR PORTANDO DOCUMENTO DE IDENTIFICAÇÃO, DUAS TESTEMUNHAS ASSINAM A PRESENTE PARA COMPROVAR SEU PEDIDO E SUA PRESENÇA.',
-          alignment: 'justify', fontSize: 10, margin: [0, 16, 0, 0] },
+          alignment: 'justify', fontSize: 10, margin: [0, 12, 0, 0] },
         // Testemunhas lado a lado, cada uma com duas linhas.
-        { columns: [assinatura(d.t1, 'TESTEMUNHA 1', false, 222, 24), assinatura(d.t2, 'TESTEMUNHA 2', false, 222, 24)], columnGap: 20 },
+        { columns: [assinatura(d.t1, 'TESTEMUNHA 1', false, 222, 20, 22), assinatura(d.t2, 'TESTEMUNHA 2', false, 222, 20, 22)], columnGap: 20 },
       );
     }
+    // Carimbo de certificação no fim, alinhado à direita, com espaço para assinatura.
+    content.push({
+      unbreakable: true,
+      margin: [0, comTest ? 10 : 30, 0, 0],
+      columns: [
+        { width: '*', text: '' },
+        {
+          width: 150,
+          table: {
+            widths: ['*'],
+            body: [[{
+              stack: [
+                { text: 'CERTIFICO E DOU FÉ QUE ESTE DOCUMENTO FOI ASSINADO EM MINHA PRESENÇA.', bold: true, alignment: 'center' },
+                { text: `${d.local}, ${dataExtenso(d.data)}.`, alignment: 'center', margin: [0, 2, 0, 0] },
+                { canvas: [{ type: 'line', x1: 10, y1: 0, x2: 130, y2: 0, lineWidth: 0.6 }], margin: [0, 16, 0, 0] },
+              ],
+              fontSize: 6, lineHeight: 1.1, margin: [3, 3, 3, 3],
+            }]],
+          },
+          layout: { hLineWidth: () => 1, vLineWidth: () => 1, hLineColor: () => '#333', vLineColor: () => '#333' },
+        },
+      ],
+    });
 
     const cabecalho = [];
     if (imagens.logo) {

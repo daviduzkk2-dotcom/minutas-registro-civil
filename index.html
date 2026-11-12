@@ -22,6 +22,8 @@
     <button type="button" class="aba ativa" data-minuta="pobreza">Declaração de pobreza – 2ª via de certidão</button>
   </nav>
 
+  <p class="aviso" id="avisoInatividade" role="status" hidden>O formulário foi apagado automaticamente depois de 10 minutos sem uso. (Clique para fechar.)</p>
+
   <form id="form" autocomplete="off" novalidate>
     <!-- MODELO -->
     <fieldset>
@@ -35,9 +37,11 @@
     <!-- CERTIDÃO -->
     <fieldset>
       <legend>Certidão pedida</legend>
+      <p class="aviso" id="avisoLivro" role="status" hidden>Minuta nova: o nome do registrado mudou, então o tipo de livro, o livro, a folha e o termo foram zerados. Escolha de novo.</p>
       <div class="grade g4">
         <label>Tipo de livro
           <select name="livroTipo" required>
+            <option value="" selected>Selecione</option>
             <option value="A">A – Nascimento</option>
             <option value="B">B – Casamento</option>
             <option value="B AUX">B Auxiliar – Casamento religioso</option>
@@ -89,6 +93,21 @@
     <!-- TESTEMUNHAS -->
     <fieldset id="blocoTestemunhas" hidden>
       <legend>Testemunhas</legend>
+      <label>Motivo das testemunhas
+        <select name="motivoTipo" id="motivoTipo">
+          <option value="semdoc" selected>Requerente sem documento de identificação</option>
+          <option value="rogo">Requerente não sabe ou não pode assinar (a rogo)</option>
+          <option value="digital">Requerente não sabe assinar (impressão digital)</option>
+          <option value="docinvalido">Documento do requerente sem condições de uso (vencido, danificado, ilegível)</option>
+          <option value="outro">Outro (escrever)</option>
+        </select>
+      </label>
+      <label>Texto que sai no documento (pode editar)
+        <textarea name="motivoTexto" id="motivoTexto" rows="3"></textarea>
+      </label>
+      <label id="lblRogo">Nome de quem assina a rogo (opcional)
+        <input name="rogoNome" id="rogoNome" placeholder="ex.: Pedro da Silva">
+      </label>
       <h3>Testemunha 1</h3>
       <label>Nome completo <input name="t1Nome"></label>
       <div class="endereco" data-pessoa="t1"></div>
@@ -113,7 +132,7 @@
       <button type="submit" class="pri">Baixar PDF</button>
       <button type="button" id="btnWord" class="sec">Baixar Word (editável)</button>
       <button type="button" id="btnCarimbo" class="sec">Carimbo de cópia (PDF)</button>
-      <button type="button" id="btnLimpar" class="perigo">Limpar tudo</button>
+      <button type="button" id="btnLimpar" class="perigo">Nova minuta (limpar)</button>
     </div>
   </form>
 

@@ -83,6 +83,29 @@
     if (t === 'C AUX') $('#lblRegistrado').firstChild.textContent = 'Nome do natimorto (ou dos pais) ';
     $('#lblRegistrado2').hidden = !casamento;
   }
+  // ---------- Motivo das testemunhas (texto pronto, editável) ----------
+  const MOTIVOS = {
+    semdoc: () => 'EM RAZÃO DE O REQUERENTE NÃO ESTAR PORTANDO DOCUMENTO DE IDENTIFICAÇÃO, DUAS TESTEMUNHAS ASSINARAM PARA COMPROVAR SEU PEDIDO E SUA PRESENÇA.',
+    rogo: (nome) => `POR NÃO SABER OU NÃO PODER O REQUERENTE ASSINAR, ASSINA A SEU ROGO ${nome || '________________________________________'}, ` +
+      'E DUAS TESTEMUNHAS ASSINARAM PARA COMPROVAR SEU PEDIDO E SUA PRESENÇA.',
+    digital: () => 'POR NÃO SABER O REQUERENTE ASSINAR, FOI COLHIDA SUA IMPRESSÃO DIGITAL, E DUAS TESTEMUNHAS ASSINARAM PARA COMPROVAR SEU PEDIDO E SUA PRESENÇA.',
+    docinvalido: () => 'EM RAZÃO DE O DOCUMENTO DE IDENTIFICAÇÃO DO REQUERENTE NÃO ESTAR EM CONDIÇÕES DE USO, DUAS TESTEMUNHAS ASSINARAM PARA COMPROVAR SEU PEDIDO E SUA PRESENÇA.',
+    outro: () => '',
+  };
+  let motivoEditado = false;
+  function atualizarMotivo(forcar) {
+    const tipo = campo('motivoTipo').value;
+    $('#lblRogo').hidden = tipo !== 'rogo';
+    if (forcar || !motivoEditado) {
+      campo('motivoTexto').value = MOTIVOS[tipo](v('rogoNome').toLocaleUpperCase('pt-BR'));
+      motivoEditado = false;
+    }
+    if (tipo === 'outro' && forcar) campo('motivoTexto').focus();
+  }
+  campo('motivoTipo').addEventListener('change', () => atualizarMotivo(true));
+  campo('rogoNome').addEventListener('input', () => atualizarMotivo(false));
+  campo('motivoTexto').addEventListener('input', () => { motivoEditado = true; });
+
   form.querySelectorAll('[name="modelo"]').forEach((r) => r.addEventListener('change', atualizarModelo));
   campo('livroTipo').addEventListener('change', atualizarLivro);
 
@@ -297,8 +320,10 @@
       req: pessoa('req', 'reqNome'), reqQualidade: v('reqQualidade'),
       t1: pessoa('t1', 't1Nome'), t2: pessoa('t2', 't2Nome'),
       local: up(v('localAssinatura')), data: v('data'),
+      motivo: up(v('motivoTexto').replace(/\s+/g, ' ')),
     };
     const casamento = d.livroTipo.startsWith('B');
+    exigir('livroTipo', 'Tipo de livro');
     exigir('livro', 'Livro nº'); exigir('folha', 'Folha'); exigir('termo', 'Termo nº');
     exigir('registrado1', casamento ? 'Nome do 1º contraente' : 'Nome do registrado');
     if (casamento) exigir('registrado2', 'Nome do 2º contraente');
@@ -307,6 +332,7 @@
     const pessoas = [['req', 'requerente']];
     if (d.modelo === 'testemunhas') {
       exigir('t1Nome', 'Nome da testemunha 1'); exigir('t2Nome', 'Nome da testemunha 2');
+      exigir('motivoTexto', 'Texto do motivo das testemunhas');
       pessoas.push(['t1', 'testemunha 1'], ['t2', 'testemunha 2']);
     }
     pessoas.forEach(([p, r]) => {
@@ -380,8 +406,7 @@
     ];
     if (comTest) {
       content.push(
-        { text: 'EM RAZÃO DE O REQUERENTE NÃO ESTAR PORTANDO DOCUMENTO DE IDENTIFICAÇÃO, DUAS TESTEMUNHAS ASSINAM A PRESENTE PARA COMPROVAR SEU PEDIDO E SUA PRESENÇA.',
-          alignment: 'justify', fontSize: 10, margin: [0, 12, 0, 0] },
+        { text: d.motivo, alignment: 'justify', fontSize: 10, margin: [0, 12, 0, 0] },
         // Testemunhas lado a lado, cada uma com duas linhas.
         { columns: [assinatura(d.t1, 'TESTEMUNHA 1', false, 222, 20, 22), assinatura(d.t2, 'TESTEMUNHA 2', false, 222, 20, 22)], columnGap: 20 },
       );
@@ -528,7 +553,7 @@
     ];
 
     if (comTest) {
-      corpo.push(p(run('EM RAZÃO DE O REQUERENTE NÃO ESTAR PORTANDO DOCUMENTO DE IDENTIFICAÇÃO, DUAS TESTEMUNHAS ASSINAM A PRESENTE PARA COMPROVAR SEU PEDIDO E SUA PRESENÇA.', { size: 20 }),
+      corpo.push(p(run(d.motivo, { size: 20 }),
         { alignment: AlignmentType.JUSTIFIED, spacing: { before: pt(12), after: 0 } }));
       const COL = 222.5;
       const celula = (x, rotulo, margemDir) => new TableCell({
@@ -614,6 +639,7 @@
     mostrarErros(erros);
     if (erros.length) return;
     const blob = await window.docx.Packer.toBlob(await documentoWord(d));
+    marcarGerado();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = nomeArquivo(d, 'docx');
@@ -627,6 +653,7 @@
     mostrarErros(erros);
     if (erros.length) return;
     const pdf = pdfMake.createPdf(documento(d));
+    marcarGerado();
     if (acao === 'baixar') {
       pdf.download(nomeArquivo(d));
     } else {
@@ -651,8 +678,28 @@
   $('#btnWord').addEventListener('click', () => {
     baixarWord().catch(() => alert('Não foi possível gerar o arquivo do Word. Tente de novo ou baixe o PDF.'));
   });
-  $('#btnLimpar').addEventListener('click', () => {
-    if (!confirm('Apagar tudo o que foi preenchido?')) return;
+  // ---------- Proteção contra livro errado: minuta nova zera o tipo de livro ----------
+  // Depois de gerar um documento, se o nome do registrado mudar, é outra minuta:
+  // o tipo de livro volta para "Selecione" e livro/folha/termo são apagados.
+  const semAc = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+  let nomeGerado = null;
+  function marcarGerado() { nomeGerado = semAc(v('registrado1')); avisoLivro(false); }
+  function avisoLivro(mostrar) { $('#avisoLivro').hidden = !mostrar; }
+  function zerarLivro() {
+    campo('livroTipo').value = '';
+    ['livro', 'folha', 'termo'].forEach((n) => { campo(n).value = ''; });
+    atualizarLivro();
+    avisoLivro(true);
+  }
+  campo('registrado1').addEventListener('change', () => {
+    if (nomeGerado !== null && semAc(v('registrado1')) !== nomeGerado) {
+      nomeGerado = null;
+      zerarLivro();
+    }
+  });
+  campo('livroTipo').addEventListener('change', () => { if (campo('livroTipo').value) avisoLivro(false); });
+
+  function limparTudo() {
     form.reset();
     form.querySelectorAll('.invalido').forEach((e) => e.classList.remove('invalido'));
     form.querySelectorAll('[data-campo="cepStatus"]').forEach((e) => { e.textContent = ''; });
@@ -664,12 +711,42 @@
     $('#erros').hidden = true;
     if (base) { selUF.value = 'SP'; cidadeAtual = null; preencherCidades(); }
     txtDest.value = '';
-    atualizarModelo(); atualizarLivro();
+    atualizarModelo(); atualizarLivro(); atualizarMotivo(true);
+    nomeGerado = null; avisoLivro(false);
     window.scrollTo(0, 0);
+  }
+  $('#btnLimpar').addEventListener('click', () => {
+    if (!confirm('Apagar tudo o que foi preenchido?')) return;
+    limparTudo();
+    $('#avisoInatividade').hidden = true;
   });
 
+  // ---------- Limpeza automática após 10 minutos sem uso ----------
+  const LIMITE_INATIVO = 10 * 60 * 1000;
+  let ultimaAtividade = Date.now();
+  const marcarAtividade = () => { ultimaAtividade = Date.now(); };
+  ['input', 'change', 'keydown', 'pointerdown', 'wheel', 'touchstart'].forEach((ev) => document.addEventListener(ev, marcarAtividade, { passive: true, capture: true }));
+  function temAlgoPreenchido() {
+    return [...form.elements].some((el) => {
+      if (!el.name || el.type === 'radio' || el.type === 'date' || el.tagName === 'SELECT') return false;
+      if (['localAssinatura', 'motivoTexto'].includes(el.name)) return false;
+      return el.value.trim() !== '';
+    });
+  }
+  function verificarInatividade() {
+    if (Date.now() - ultimaAtividade < LIMITE_INATIVO) return;
+    ultimaAtividade = Date.now();
+    if (!temAlgoPreenchido() && $('#previa').hidden) return;
+    limparTudo();
+    $('#avisoInatividade').hidden = false;
+  }
+  setInterval(verificarInatividade, 30 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) verificarInatividade(); });
+  $('#avisoInatividade').addEventListener('click', () => { $('#avisoInatividade').hidden = true; });
+
   // Ao recarregar, o navegador pode repor valores antigos: começa sempre limpo.
-  window.addEventListener('pageshow', () => { form.reset(); $('#data').value = hojeISO(); atualizarModelo(); atualizarLivro(); });
+  window.addEventListener('pageshow', () => { form.reset(); $('#data').value = hojeISO(); atualizarModelo(); atualizarLivro(); atualizarMotivo(true); });
   atualizarModelo();
   atualizarLivro();
+  atualizarMotivo(true);
 })();

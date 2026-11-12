@@ -359,7 +359,6 @@
     if (r.livroTipo && r.livroTipo.startsWith('B')) {
       if (r.nomes[1]) { campo('registrado2').value = r.nomes[1]; dispara(campo('registrado2')); ok.push(`2º contraente: <b>${r.nomes[1]}</b>`); }
       else falta.push('nome do 2º contraente (digite à mão)');
-      (r.novosNomes || []).forEach((nn, n) => { if (nn && r.nomes[n]) falta.push(`o ${n + 1}º contraente tem <b>novo nome</b> no registro (${nn}); usei o nome de antes do casamento (${r.nomes[n]}). Troque se precisar do nome atual`); });
     }
     // 3) cartório pelo CNS
     const c = acharPorCNS(r.cns);

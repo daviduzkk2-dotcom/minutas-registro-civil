@@ -268,22 +268,38 @@
 
   // =====================================================================
   // Documento genérico → PDF (pdfmake) e Word (docx)
-  // Blocos: {p:[runs], al, ind, antes, depois, tam} | {ass:{nome:[runs], linhas:[[runs]], esq, larg}} | {lado:[ass, ass]} | {espaco}
-  // run: 'texto' ou {t:'texto', b:true}
+  // Blocos: {p:[runs], al, ind, esqBloco, antes, depois, tam, neg} | {ass:{nome, linhas, larg, centro}} | {lado:[ass, ass]} | {grupo:[...]}
+  // run: 'texto' (os nomes da lista NOMES saem em negrito sozinhos) ou {t, b}
   // =====================================================================
   const R = (t, b) => ({ t, b: !!b });
   const LARG_UTIL = 475; // largura útil do A4 com as margens usadas (pt)
   const MARGENS = { esq: 65, dir: 55, cima: 42, baixo: 40 };
+  const RECUO = 70; // recuo da primeira linha, como nos modelos do cartório
+  let NOMES = [];
+  // Quebra o texto e põe em negrito os nomes conhecidos (requerente, registrados, pais...).
+  function partes(rs) {
+    const nomes = [...new Set(NOMES.filter((n) => n && n.length > 2))].sort((a, b) => b.length - a.length);
+    const re = nomes.length ? new RegExp('(' + nomes.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'g') : null;
+    const out = [];
+    rs.forEach((r) => {
+      if (typeof r !== 'string') { out.push(r); return; }
+      if (!re) { out.push({ t: r, b: false }); return; }
+      r.split(re).forEach((s, i) => { if (s) out.push({ t: s, b: i % 2 === 1 }); });
+    });
+    return out;
+  }
 
   function pdfDoc(titulo, blocos) {
-    const runs = (rs) => rs.map((r) => (typeof r === 'string' ? r : { text: r.t, bold: r.b }));
+    const runs = (rs, neg) => partes(rs).map((r) => ({ text: r.t, bold: !!(neg || r.b) }));
     const assin = (a) => {
+      const larg = a.larg || 320, al = a.centro ? 'center' : 'left';
       const st = [
-        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: a.larg || 320, y2: 0, lineWidth: 0.8 }], margin: [0, a.antes || 26, 0, 2] },
-        { text: runs(a.nome), fontSize: a.tam || 10 },
-        ...(a.linhas || []).map((l) => ({ text: runs(l), fontSize: (a.tam || 10) - 0.5 })),
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: larg, y2: 0, lineWidth: 0.8 }], margin: [0, a.antes || 26, 0, 2] },
+        { text: runs(a.nome, a.neg), fontSize: a.tam || 10, alignment: al },
+        ...(a.linhas || []).map((l) => ({ text: runs(l), fontSize: (a.tam || 10) - 0.5, alignment: al })),
       ];
-      return a.esq ? { columns: [{ width: a.esq, text: '' }, { stack: st }], unbreakable: true } : { stack: st, unbreakable: true };
+      if (a.centro) return { columns: [{ width: '*', text: '' }, { width: larg, stack: st }, { width: '*', text: '' }], unbreakable: true };
+      return { stack: st, unbreakable: true };
     };
     const render = (b) => {
       if (b.grupo) return { stack: b.grupo.map(render), unbreakable: true };
@@ -291,16 +307,15 @@
       if (b.ass) return assin(b.ass);
       if (b.lado) return { columns: b.lado.map(assin), columnGap: 20, unbreakable: true };
       return {
-        text: runs(b.p), alignment: { j: 'justify', c: 'center', e: 'left', d: 'right' }[b.al || 'j'],
+        text: runs(b.p, b.neg), alignment: { j: 'justify', c: 'center', e: 'left', d: 'right' }[b.al || 'j'],
         leadingIndent: b.ind || 0, margin: [b.esqBloco || 0, b.antes || 0, 0, b.depois == null ? 4 : b.depois], fontSize: b.tam || 10.5,
         lineHeight: b.lh || 1.15,
       };
     };
-    const content = blocos.map(render);
     return {
       pageSize: 'A4', pageMargins: [MARGENS.esq, MARGENS.cima, MARGENS.dir, MARGENS.baixo],
       info: { title: titulo, creator: 'Minutas do Registro Civil' },
-      defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.2 }, content,
+      defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.2 }, content: blocos.map(render),
     };
   }
 
@@ -311,15 +326,17 @@
     const F = 'Arial';
     const SB = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
     const sem = { top: SB, bottom: SB, left: SB, right: SB, insideHorizontal: SB, insideVertical: SB };
-    const runs = (rs, tam) => rs.map((r) => new TextRun({ text: typeof r === 'string' ? r : r.t, bold: typeof r === 'string' ? false : r.b, font: F, size: Math.round(tam * 2) }));
+    const runs = (rs, tam, neg) => partes(rs).map((r) => new TextRun({ text: r.t, bold: !!(neg || r.b), font: F, size: Math.round(tam * 2) }));
     const AL = { j: AlignmentType.JUSTIFIED, c: AlignmentType.CENTER, e: AlignmentType.LEFT, d: AlignmentType.RIGHT };
     const assin = (a, total) => {
-      const esq = a.esq || 0, larg = a.larg || 320, tam = a.tam || 10;
+      const larg = a.larg || 320, tam = a.tam || 10;
+      const esq = a.centro ? Math.max(0, (total - larg) / 2) : 0;
       const ind = { left: pt(esq), right: pt(Math.max(0, total - esq - larg)) };
+      const al = a.centro ? AlignmentType.CENTER : AlignmentType.LEFT;
       return [
         new Paragraph({ children: [new TextRun({ text: '', font: F })], spacing: { before: pt(a.antes || 26), after: pt(2) }, indent: ind, border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: '000000' } } }),
-        new Paragraph({ children: runs(a.nome, tam), spacing: { after: 0 }, indent: { left: pt(esq) } }),
-        ...(a.linhas || []).map((l) => new Paragraph({ children: runs(l, tam - 0.5), spacing: { after: 0 }, indent: { left: pt(esq) } })),
+        new Paragraph({ children: runs(a.nome, tam, a.neg), spacing: { after: 0 }, alignment: al }),
+        ...(a.linhas || []).map((l) => new Paragraph({ children: runs(l, tam - 0.5), spacing: { after: 0 }, alignment: al })),
       ];
     };
     const filhos = [];
@@ -335,14 +352,14 @@
           rows: [new TableRow({ cantSplit: true, children: b.lado.map((a, i) => new TableCell({
             width: { size: pt(i === 0 ? col + 20 : col), type: WidthType.DXA }, borders: sem,
             margins: { left: 0, right: pt(i === 0 ? 20 : 0), top: 0, bottom: 0 },
-            children: assin(Object.assign({}, a, { esq: 0, larg: Math.min(a.larg || col, col) }), col),
+            children: assin(Object.assign({}, a, { centro: false, larg: Math.min(a.larg || col, col) }), col),
           })) })],
         }));
         return;
       }
       const tam = b.tam || 10.5;
       filhos.push(new Paragraph({
-        children: runs(b.p, tam), alignment: AL[b.al || 'j'],
+        children: runs(b.p, tam, b.neg), alignment: AL[b.al || 'j'],
         indent: { firstLine: pt(b.ind || 0), left: pt(b.esqBloco || 0) },
         spacing: { before: pt(b.antes || 0), after: pt(b.depois == null ? 4 : b.depois), line: Math.round((b.lh || 1.15) * 240) },
       }));
@@ -354,41 +371,87 @@
     });
   }
 
-  // Final comum: local/data, assinatura(s) e certificação.
+  // Peças de texto comuns
+  const titulo = (t) => ({ p: [t], al: 'e', antes: 8, depois: 2 });           // "I – REQUERENTE:" (sem negrito)
+  const enderecamento = (t) => ({ p: [t], al: 'j', neg: true, depois: 12 });  // endereçamento em negrito
+  // Texto de caixa editável → parágrafos. Linhas que começam com espaço/tab saem recuadas como item.
+  function paragrafosDe(texto) {
+    return texto.split(/\r?\n/).filter((l) => l.trim()).map((l) => (/^[\t ]{2,}|^\t/.test(l)
+      ? { p: [l.trim()], esqBloco: 40, depois: 3 }
+      : { p: [l.trim()], ind: RECUO }));
+  }
+
+  // Final comum: local/data centralizados, assinatura(s) centralizada(s) e certificação.
   function fechamentoBlocos(f, assinaturas, { docsOriginais = false } = {}) {
-    const bl = [{ p: [`${f.local}, ${B.dataExtenso(f.data)}.`], al: 'e', antes: 8, depois: 0 }];
+    const bl = [{ p: [`${f.local}, ${B.dataExtenso(f.data)}.`], al: 'c', antes: 10, depois: 0 }];
     assinaturas.forEach((a) => bl.push(a));
     // A certificação e a assinatura de quem certifica ficam sempre juntas na mesma página.
     bl.push({ grupo: [
-      { p: [R('CERTIFICO E DOU FÉ', true), ' que a assinatura supra foi lançada em minha presença.' + (docsOriginais ? ' Certifico ainda que todos os documentos anexados foram extraídos dos originais.' : '')], antes: 12, depois: 0, tam: 9.5 },
-      { ass: { nome: [R(`${f.escrevente} – ${f.cargo}`, true)], linhas: [[`SELO: ${f.selo || '______________________________'}`]], larg: 300, antes: 24, tam: 9.5 } },
+      { p: [R('CERTIFICO E DOU FÉ', true), ' que a assinatura supra foi lançada em minha presença.' + (docsOriginais ? ' Certifico ainda que todos os documentos anexados foram extraídos dos originais.' : '')], antes: 14, depois: 0, tam: 9.5 },
+      { ass: { nome: [`${f.escrevente} – ${f.cargo}`], linhas: [[`SELO: ${f.selo || '______________________________'}`]], larg: 300, antes: 24, tam: 9.5, centro: true } },
     ] });
     return bl;
   }
+  const assinaturaCentro = (nome, linhas) => ({ ass: { nome: [nome], linhas: linhas || [], larg: 320, centro: true, neg: true } });
 
   function nomeArquivo(prefixo, nome, ext) {
     const b = (nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     return `${prefixo}-${b || 'minuta'}.${ext}`;
   }
-  async function entregar(acao, titulo, blocos, arquivo) {
+  async function entregar(acao, r) {
+    NOMES = r.nomes || [];
     if (acao === 'word') {
-      const blob = await window.docx.Packer.toBlob(wordDoc(titulo, blocos));
+      const blob = await window.docx.Packer.toBlob(wordDoc(r.titulo, r.blocos));
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = arquivo + '.docx';
+      const a = document.createElement('a'); a.href = url; a.download = r.arquivo + '.docx';
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       return;
     }
-    const pdf = pdfMake.createPdf(pdfDoc(titulo, blocos));
-    if (acao === 'pdf') pdf.download(arquivo + '.pdf');
+    const pdf = pdfMake.createPdf(pdfDoc(r.titulo, r.blocos));
+    if (acao === 'pdf') pdf.download(r.arquivo + '.pdf');
     else pdf.getBlob((blob) => B.mostrarPdf(blob));
   }
 
+  // Caixa "texto que vai sair (pode editar)": montada sozinha; depois de editada, não é mais trocada.
+  function blocoTexto(raiz, id, legenda) {
+    raiz.insertAdjacentHTML('beforeend', `
+      <fieldset class="texto-editavel"><legend>${legenda}</legend>
+        <p class="dica">O texto é montado sozinho com os dados preenchidos. Pode editar à vontade: depois de editado, o site não troca mais.
+          Linhas que começam com espaço saem recuadas, como item. Os nomes saem em negrito no documento.</p>
+        <textarea id="${id}" rows="9"></textarea>
+        <div class="acoes-crc"><button type="button" class="sec mini" id="${id}Refazer">Refazer texto automático</button>
+          <span class="dica" id="${id}Estado"></span></div>
+      </fieldset>`);
+    const ta = $(`#${id}`), estado = $(`#${id}Estado`);
+    let editado = false;
+    const marcar = () => { estado.textContent = editado ? 'Texto editado à mão (não é mais atualizado sozinho).' : 'Atualizando sozinho.'; };
+    ta.addEventListener('input', () => { editado = true; marcar(); });
+    marcar();
+    return {
+      ta,
+      atualizar(t) { if (!editado) ta.value = t; },
+      refazer(t) { editado = false; ta.value = t; marcar(); },
+      reset() { editado = false; ta.value = ''; marcar(); },
+      ler: () => ta.value,
+    };
+  }
+
   // Monta uma aba: chama "montar" para criar os campos e liga os botões.
-  function criarAba({ nome, raiz, id, montar, gerar, limparExtra, camposZerar }) {
+  function criarAba({ nome, raiz, id, montar, gerar, limparExtra, camposZerar, textoAuto }) {
     const ctx = montar(raiz);
     botoes(raiz, id);
     let nomeGerado = null;
+    // texto automático: recalcula a cada mudança nos campos (menos na própria caixa de texto)
+    if (ctx.texto && textoAuto) {
+      let t = null;
+      const recalcular = () => { clearTimeout(t); t = setTimeout(() => ctx.texto.atualizar(textoAuto(ctx)), 150); };
+      raiz.addEventListener('input', (e) => { if (e.target !== ctx.texto.ta) recalcular(); });
+      raiz.addEventListener('change', (e) => { if (e.target !== ctx.texto.ta) recalcular(); });
+      raiz.addEventListener('click', (e) => { if (e.target.closest('.combo-lista, .remover, #retAdd')) recalcular(); });
+      $(`#${ctx.texto.ta.id}Refazer`).addEventListener('click', () => ctx.texto.refazer(textoAuto(ctx)));
+      ctx.recalcular = recalcular;
+    }
     raiz.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-acao]'); if (!b || !raiz.contains(b)) return;
       const acao = b.dataset.acao;
@@ -398,7 +461,7 @@
       const r = gerar(ctx, erros);
       if (mostrarErros(raiz, id, erros) || !r) return;
       try {
-        await entregar(acao === 'ver' ? 'ver' : acao, r.titulo, r.blocos, r.arquivo);
+        await entregar(acao === 'ver' ? 'ver' : acao, r);
         nomeGerado = r.chave;
       } catch (err) { console.error(err); alert('Não foi possível gerar o documento. Tente de novo.'); }
     });
@@ -408,6 +471,7 @@
         if (nomeGerado !== null && up(limpo(ctx.campoChave.value)) !== nomeGerado) {
           nomeGerado = null;
           (camposZerar ? camposZerar(ctx) : []).forEach((el) => { el.value = ''; el.dispatchEvent(new Event('change')); });
+          if (ctx.texto) ctx.texto.reset();
           const av = $(`#${id}AvisoNova`); if (av) av.hidden = false;
         }
       });
@@ -425,6 +489,7 @@
       const av = $(`#${id}AvisoNova`); if (av) av.hidden = true;
       nomeGerado = null;
       if (limparExtra) limparExtra(ctx);
+      if (ctx.texto) ctx.texto.reset();
       if (B.abaAtual() === nome) B.esconderPrevia();
     }
     B.registrarAba({
@@ -435,13 +500,13 @@
   }
 
   const ASSENTOS = [
-    ['A', 'Nascimento (Livro A)', 'NASCIMENTO'], ['B', 'Casamento (Livro B)', 'CASAMENTO'], ['B AUX', 'Casamento religioso (Livro B Auxiliar)', 'CASAMENTO'],
-    ['C', 'Óbito (Livro C)', 'ÓBITO'], ['C AUX', 'Natimorto (Livro C Auxiliar)', 'NATIMORTO'],
+    ['A', 'Nascimento', 'NASCIMENTO', 'A'], ['B', 'Casamento', 'CASAMENTO', 'B'], ['B AUX', 'Casamento religioso com efeito civil', 'CASAMENTO', 'B-Auxiliar'],
+    ['C', 'Óbito', 'ÓBITO', 'C'], ['C AUX', 'Natimorto', 'NATIMORTO', 'C-Auxiliar'],
   ];
-  const livroTxt = (tipo, n) => `${tipo.replace(' AUX', '-Auxiliar')}-${n}`;
+  const LIVROS = ['A', 'B', 'B-Auxiliar', 'C', 'C-Auxiliar', 'E'];
 
   // =====================================================================
-  // 1) RETIFICAÇÃO
+  // 1) RETIFICAÇÃO (seções; complementação de dados e/ou correção)
   // =====================================================================
   const CAMPOS_RET = ['Nome do(a) registrado(a)', 'Nome do pai', 'Nome da mãe', 'Nome dos avós paternos', 'Nome dos avós maternos',
     'Data de nascimento', 'Local de nascimento', 'Naturalidade', 'Nome do contraente', 'Nome da contraente', 'Filiação do contraente',
@@ -453,11 +518,69 @@
     docinvalido: (s) => `Considerando que o documento de identificação apresentado ${gx(s, 'pelo', 'pela')} requerente não está em condições de uso, segue a qualificação das testemunhas, nos termos da legislação aplicável.`,
     outro: () => '',
   };
+  const FUNDAMENTOS = {
+    97: ['nos termos do artigo 97 da Lei nº 6.015/1973', 'no artigo 97 da Lei nº 6.015/1973'],
+    '97e110': ['nos termos dos artigos 97 e 110 da Lei nº 6.015/1973', 'nos artigos 97 e 110 da Lei nº 6.015/1973'],
+    110: ['nos termos do artigo 110 da Lei nº 6.015/1973', 'no artigo 110 da Lei nº 6.015/1973'],
+  };
+
+  // Caixa de complementação de dados de uma pessoa do assento.
+  function blocoComplemento(raiz, k) {
+    raiz.insertAdjacentHTML('beforeend', `
+      <div class="complemento" data-k="${k}">
+        <h3 data-titulo></h3>
+        <div class="grade g4">
+          <label>Sexo <select data-f="sexo"><option value="" selected>Não incluir</option><option value="M">Masculino</option><option value="F">Feminino</option></select></label>
+          <label>Data de nascimento <input type="date" data-f="nascimento"></label>
+          <label>Nacionalidade <input data-f="nacionalidade" placeholder="ex.: Brasileira"></label>
+          <label>Naturalidade <input data-f="naturalidade" placeholder="ex.: São Paulo/SP"></label>
+        </div>
+        <div class="grade g2">
+          <label>Nome do pai <input data-f="pai"></label>
+          <label>Nome da mãe <input data-f="mae"></label>
+        </div>
+        <div class="grade g4">
+          <label>Registrado(a) em (cartório) <input data-f="regCart" placeholder="ex.: São Paulo – 28º Subdistrito – Jardim Paulista – SP"></label>
+          <label>Livro A nº <input data-f="regLivro"></label>
+          <label>Folha <input data-f="regFolha"></label>
+          <label>Termo <input data-f="regTermo"></label>
+        </div>
+        <label>Constar o nome completo (se for o caso) <input data-f="nomeCompleto"></label>
+      </div>`);
+    const caixa = raiz.querySelector(`.complemento[data-k="${k}"]`);
+    const f = (n) => caixa.querySelector(`[data-f="${n}"]`);
+    return {
+      caixa,
+      titulo(t) { caixa.querySelector('[data-titulo]').textContent = t; },
+      ler: () => {
+        const o = {}; ['sexo', 'nascimento', 'nacionalidade', 'naturalidade', 'pai', 'mae', 'regCart', 'regLivro', 'regFolha', 'regTermo', 'nomeCompleto'].forEach((n) => { o[n] = limpo(f(n).value); });
+        o.pai = up(o.pai); o.mae = up(o.mae); o.nomeCompleto = up(o.nomeCompleto); return o;
+      },
+    };
+  }
+  // "Sexo: Feminino; Nome dos genitores: X e Y; Data de nascimento: ...; Nacionalidade: ...; Naturalidade: ..., e registrada em ..., conforme o Lº A-12, fls. 134, T-7712; bem como constar seu nome completo: NOME."
+  function textoComplemento(d) {
+    const p = [];
+    if (d.sexo) p.push(`Sexo: ${d.sexo === 'F' ? 'Feminino' : 'Masculino'}`);
+    const gen = [d.pai, d.mae].filter(Boolean);
+    if (gen.length) p.push(`Nome ${gen.length > 1 ? 'dos genitores' : 'do genitor'}: ${gen.join(' e ')}`);
+    if (d.nascimento) p.push(`Data de nascimento: ${dataBR(d.nascimento)}`);
+    if (d.nacionalidade) p.push(`Nacionalidade: ${d.nacionalidade}`);
+    let nat = d.naturalidade ? `Naturalidade: ${d.naturalidade}` : '';
+    if (d.regCart || d.regLivro) {
+      const reg = `${gx(d.sexo, 'registrado', 'registrada')}${d.regCart ? ` em ${d.regCart}` : ''}${d.regLivro ? `, conforme o Lº A-${d.regLivro}${d.regFolha ? `, fls. ${d.regFolha}` : ''}${d.regTermo ? `, T-${d.regTermo}` : ''}` : ''}`;
+      nat = nat ? `${nat}, e ${reg}` : reg.charAt(0).toUpperCase() + reg.slice(1);
+    }
+    if (nat) p.push(nat);
+    let s = p.join('; ');
+    if (d.nomeCompleto) s += `${s ? '; bem como ' : ''}constar seu nome completo: ${d.nomeCompleto}`;
+    return s ? s + '.' : '';
+  }
 
   const ret = criarAba({
     nome: 'retificacao', raiz: $('#abaRetificacao'), id: 'ret',
     montar(raiz) {
-      raiz.insertAdjacentHTML('beforeend', '<p class="aviso" id="retAvisoNova" hidden>Minuta nova: o requerente mudou, então o tipo de assento, o livro, a folha e o termo foram zerados. Escolha de novo.</p>');
+      raiz.insertAdjacentHTML('beforeend', '<p class="aviso" id="retAvisoNova" hidden>Minuta nova: o requerente mudou, então o tipo de assento, o livro, a folha, o termo e o texto foram zerados.</p>');
       const destino = blocoDestino(raiz, 'retD');
       raiz.insertAdjacentHTML('beforeend', `
         <fieldset><legend>Quem requer</legend>
@@ -466,11 +589,11 @@
             <label class="opcao"><input type="radio" name="retQuem" value="representante"> Representante legal (pai/mãe de registrado menor)</label>
             <label class="opcao"><input type="radio" name="retQuem" value="procurador"> Procurador(a)</label>
           </div>
-          <div class="grade g2" id="retRepres" hidden>
-            <label>Nome do(a) representado(a) <input id="retRepNome"></label>
-            <label id="retProcLbl">Procuração (onde e quando foi feita) <input id="retProcTxt" placeholder="ex.: lavrada no 1º Tabelião de Notas de X, livro 10, fls. 20, em 01/02/2026"></label>
-          </div>
           <div id="retReq"></div>
+          <div id="retRepres" hidden>
+            <label id="retProcLbl">Procuração (onde e quando foi feita) <input id="retProcTxt" placeholder="ex.: lavrada no 1º Tabelião de Notas de X, livro 10, fls. 20, em 01/02/2026"></label>
+            <div id="retRepQual"></div>
+          </div>
         </fieldset>
         <fieldset><legend>Modelo</legend>
           <div class="opcoes">
@@ -485,7 +608,7 @@
               <option value="docinvalido">Documento sem condições de uso</option>
               <option value="outro">Outro (escrever)</option></select></label>
             <label id="retRogoLbl" hidden>Nome de quem assina a rogo (opcional) <input id="retRogo"></label>
-            <label>Texto que sai no documento (pode editar) <textarea id="retMotivo" rows="3"></textarea></label>
+            <label>Texto do motivo (pode editar) <textarea id="retMotivo" rows="3"></textarea></label>
             <div id="retT1"></div><div id="retT2"></div>
           </div>
         </fieldset>
@@ -493,30 +616,39 @@
           <div class="grade g4">
             <label>Tipo de assento <select id="retTipo"><option value="" selected>Selecione</option>
               ${ASSENTOS.map((a) => `<option value="${a[0]}">${a[1]}</option>`).join('')}</select></label>
+            <label>Livro <select id="retLivroLetra">${LIVROS.map((l) => `<option>${l}</option>`).join('')}</select></label>
             <label>Livro nº <input id="retLivro" inputmode="numeric"></label>
             <label>Folha <input id="retFolha" inputmode="numeric"></label>
-            <label>Termo nº <input id="retTermo" inputmode="numeric"></label>
           </div>
-          <div class="grade g2">
+          <div class="grade g4">
+            <label>Termo nº <input id="retTermo" inputmode="numeric"></label>
             <label id="retN1Lbl">Nome do(a) registrado(a) <input id="retN1"></label>
             <label id="retN2Lbl" hidden>Nome do 2º contraente <input id="retN2"></label>
+            <span></span>
           </div>
         </fieldset>
-        <fieldset><legend>O que corrigir</legend>
-          <div id="retCorrecoes"></div>
-          <button type="button" class="sec mini" id="retAdd">+ adicionar correção</button>
+        <fieldset><legend>O que retificar</legend>
+          <label class="opcao"><input type="checkbox" id="retUsaComp"> Complementação de dados (incluir dados que não constam)</label>
+          <div id="retComp" hidden></div>
+          <label class="opcao" style="margin-top:8px"><input type="checkbox" id="retUsaCorr" checked> Correção (onde consta / deve constar)</label>
+          <div id="retCorrBox">
+            <div id="retCorrecoes"></div>
+            <button type="button" class="sec mini" id="retAdd">+ adicionar correção</button>
+          </div>
           <div class="grade g2" style="margin-top:12px">
             <label>Fundamento <select id="retFundTipo">
-              <option value="97e110" selected>arts. 97 e 110 da Lei nº 6.015/1973</option>
               <option value="97">art. 97 da Lei nº 6.015/1973</option>
+              <option value="97e110" selected>arts. 97 e 110 da Lei nº 6.015/1973</option>
               <option value="110">art. 110 da Lei nº 6.015/1973</option></select></label>
-            <label>Texto do fundamento (pode editar) <input id="retFund" value="nos termos dos arts. 97 e 110 da Lei nº 6.015/1973"></label>
+            <label class="opcao" style="align-self:end"><input type="checkbox" id="retIsento"> Erro imputável ao cartório – sai "ISENTO"</label>
           </div>
-          <label class="opcao"><input type="checkbox" id="retIsento"> Erro imputável ao cartório – sai "ISENTO" no documento</label>
         </fieldset>`);
       const req = blocoPessoa($('#retReq'), 'retR', { titulo: 'Qualificação de quem assina o requerimento' });
+      const repr = blocoPessoa($('#retRepQual'), 'retRp', { titulo: 'Qualificação do(a) representado(a) / outorgante (em nome de quem se pede)' });
       const t1 = blocoPessoa($('#retT1'), 'retT1', { titulo: 'Testemunha 1', completo: false });
       const t2 = blocoPessoa($('#retT2'), 'retT2', { titulo: 'Testemunha 2', completo: false });
+      const comp = [blocoComplemento($('#retComp'), 1), blocoComplemento($('#retComp'), 2)];
+      const texto = blocoTexto(raiz, 'retTexto', 'II – Requerimento: texto que vai sair no documento (pode editar)');
       const fech = blocoFechamento(raiz, 'retF');
       // linhas de correção
       const caixa = $('#retCorrecoes');
@@ -536,7 +668,6 @@
       }
       addLinha();
       $('#retAdd').addEventListener('click', addLinha);
-      // quem requer / modelo / tipo de assento / motivo / fundamento
       const quem = () => raiz.querySelector('[name=retQuem]:checked').value;
       raiz.querySelectorAll('[name=retQuem]').forEach((r) => r.addEventListener('change', () => {
         $('#retRepres').hidden = quem() === 'proprio';
@@ -555,44 +686,78 @@
       req.el('sexo').addEventListener('change', () => motivo(false));
       $('#retMotivo').addEventListener('input', () => { motivoEditado = true; });
       motivo(true);
-      $('#retTipo').addEventListener('change', () => {
+      function ajustarTipo() {
         const t = $('#retTipo').value, cas = t.startsWith('B');
         $('#retN1Lbl').firstChild.textContent = cas ? 'Nome do 1º contraente ' : t.startsWith('C') ? 'Nome do(a) falecido(a) ' : 'Nome do(a) registrado(a) ';
         $('#retN2Lbl').hidden = !cas;
-      });
-      $('#retFundTipo').addEventListener('change', () => {
-        $('#retFund').value = { '97e110': 'nos termos dos arts. 97 e 110 da Lei nº 6.015/1973', 97: 'nos termos do art. 97 da Lei nº 6.015/1973', 110: 'nos termos do art. 110 da Lei nº 6.015/1973' }[$('#retFundTipo').value];
-      });
-      return { destino, req, t1, t2, fech, quem, modelo, addLinha, caixa, motivo, campoChave: req.el('nome'), resetMotivo: () => { motivoEditado = false; } };
+        const a = ASSENTOS.find((x) => x[0] === t); if (a) $('#retLivroLetra').value = a[3];
+        comp[1].caixa.hidden = !cas;
+        comp[0].titulo(cas ? 'Dados complementares do(a) 1º contraente' : t.startsWith('C') ? 'Dados complementares do(a) falecido(a)' : 'Dados complementares do(a) registrado(a)');
+        comp[1].titulo('Dados complementares do(a) 2º contraente');
+      }
+      $('#retTipo').addEventListener('change', ajustarTipo);
+      ajustarTipo();
+      $('#retUsaComp').addEventListener('change', () => { $('#retComp').hidden = !$('#retUsaComp').checked; });
+      $('#retUsaCorr').addEventListener('change', () => { $('#retCorrBox').hidden = !$('#retUsaCorr').checked; });
+      return { destino, req, repr, t1, t2, comp, fech, texto, quem, modelo, addLinha, caixa, motivo, ajustarTipo, campoChave: req.el('nome'), resetMotivo: () => { motivoEditado = false; } };
+    },
+    textoAuto(ctx) {
+      const tipo = $('#retTipo').value;
+      const a = ASSENTOS.find((x) => x[0] === tipo);
+      const assento = a ? a[2] : '[TIPO DE ASSENTO]';
+      const n1 = up(limpo($('#retN1').value)) || '[NOME]', n2 = up(limpo($('#retN2').value)) || '[NOME]';
+      const nomes = tipo.startsWith('B') ? `${n1} e ${n2}` : n1;
+      const livro = `Livro ${$('#retLivroLetra').value}-${limpo($('#retLivro').value) || '__'}, fls. ${limpo($('#retFolha').value) || '__'}, termo nº ${limpo($('#retTermo').value) || '__'}`;
+      const fund = FUNDAMENTOS[$('#retFundTipo').value][0];
+      const linhas = [`Venho, através deste, requerer a retificação, ${fund}, do assento de ${assento} de ${nomes}, para constar:`];
+      if ($('#retUsaComp').checked) {
+        const quantos = tipo.startsWith('B') ? 2 : 1;
+        for (let i = 0; i < quantos; i++) {
+          const d = ctx.comp[i].ler(), t = textoComplemento(d);
+          if (!t) continue;
+          const s = d.sexo;
+          const quemE = tipo.startsWith('B') ? `${i === 0 ? gx(s, 'do primeiro', 'da primeira') : gx(s, 'do segundo', 'da segunda')} ${gx(s, 'contraente', 'contraente')}`
+            : tipo.startsWith('C') ? gx(s, 'do falecido', 'da falecida') : gx(s, 'do registrado', 'da registrada');
+          linhas.push(`Os dados complementares ${quemE}:`);
+          linhas.push(`\t${t}`);
+        }
+      }
+      if ($('#retUsaCorr').checked) {
+        const corr = [...ctx.caixa.children].map((d) => {
+          const g = (k) => d.querySelector(`[data-k=${k}]`);
+          return { campo: g('campo').value === 'Outro' ? limpo(g('outro').value) : g('campo').value, consta: up(limpo(g('consta').value)), deve: up(limpo(g('deve').value)) };
+        }).filter((c) => c.consta || c.deve);
+        if (corr.length) {
+          linhas.push(corr.length > 1 ? 'As seguintes correções:' : 'A seguinte correção:');
+          corr.forEach((c, i) => linhas.push(`\t${c.campo || '[campo]'}: onde consta “${c.consta || '___'}”, deve constar “${c.deve || '___'}”${i === corr.length - 1 ? '.' : ';'}`));
+        }
+      }
+      linhas.push('Tudo conforme cópias comprobatórias em anexo.');
+      linhas.push(`Diante do exposto, requer que seja feita a retificação junto ao termo de ${assento} lavrado no ${livro}. Certifico ainda que os documentos em anexo conferem com o original.`);
+      return linhas.join('\n');
     },
     camposZerar: () => [$('#retTipo'), $('#retLivro'), $('#retFolha'), $('#retTermo')],
     limparExtra(ctx) {
-      ctx.destino.limpar(); ctx.req.limpar(); ctx.t1.limpar(); ctx.t2.limpar(); ctx.fech.reiniciarData();
+      ctx.destino.limpar(); ctx.req.limpar(); ctx.repr.limpar(); ctx.t1.limpar(); ctx.t2.limpar(); ctx.fech.reiniciarData();
       ctx.caixa.innerHTML = ''; ctx.addLinha();
-      $('#retRepres').hidden = true; $('#retTest').hidden = true; $('#retN2Lbl').hidden = true;
-      $('#retN1Lbl').firstChild.textContent = 'Nome do(a) registrado(a) ';
-      ctx.resetMotivo(); ctx.motivo(true);
+      $('#retRepres').hidden = true; $('#retTest').hidden = true; $('#retComp').hidden = true; $('#retCorrBox').hidden = false;
+      ctx.ajustarTipo(); ctx.resetMotivo(); ctx.motivo(true);
     },
     gerar(ctx, erros) {
       const dest = ctx.destino.texto();
       if (!dest) { erros.push('Cartório de destino'); ctx.destino.el.classList.add('invalido'); }
       const q = ctx.quem(), comTest = ctx.modelo() === 'testemunhas';
       ctx.req.validar(erros, 'Requerente', ['nome', 'sexo', 'nacionalidade', 'estadoCivil', 'logradouro', 'numero'].concat(comTest ? [] : ['cpf']));
-      if (q !== 'proprio' && !limpo($('#retRepNome').value)) { erros.push('Nome do(a) representado(a)'); $('#retRepNome').classList.add('invalido'); }
+      if (q !== 'proprio') ctx.repr.validar(erros, 'Representado(a)', ['nome', 'sexo', 'nacionalidade', 'estadoCivil', 'nascimento', 'logradouro', 'numero']);
       [['#retTipo', 'Tipo de assento'], ['#retLivro', 'Livro nº'], ['#retFolha', 'Folha'], ['#retTermo', 'Termo nº'], ['#retN1', 'Nome que consta no registro']].forEach(([s, r]) => {
         if (!limpo($(s).value)) { erros.push(r); $(s).classList.add('invalido'); }
       });
       const tipo = $('#retTipo').value;
       if (tipo.startsWith('B') && !limpo($('#retN2').value)) { erros.push('Nome do 2º contraente'); $('#retN2').classList.add('invalido'); }
-      const corr = [...ctx.caixa.children].map((d) => {
-        const g = (k) => d.querySelector(`[data-k=${k}]`);
-        const campo = g('campo').value === 'Outro' ? limpo(g('outro').value) : g('campo').value;
-        if (!limpo(g('consta').value)) { g('consta').classList.add('invalido'); }
-        if (!limpo(g('deve').value)) { g('deve').classList.add('invalido'); }
-        if (g('campo').value === 'Outro' && !campo) g('outro').classList.add('invalido');
-        return { campo, consta: limpo(g('consta').value), deve: limpo(g('deve').value) };
-      });
-      if (corr.some((c) => !c.campo || !c.consta || !c.deve)) erros.push('Correções: preencha o campo, "onde consta" e "deve constar" de cada linha');
+      if (!$('#retUsaComp').checked && !$('#retUsaCorr').checked) erros.push('Escolha o que retificar: complementação de dados e/ou correção');
+      const texto = ctx.texto.ler();
+      if (!limpo(texto)) { erros.push('Texto do requerimento'); ctx.texto.ta.classList.add('invalido'); }
+      if (/\[(NOME|TIPO DE ASSENTO|campo)\]|“___”|-__,|fls\. __/.test(texto)) erros.push('O texto do requerimento ainda tem partes em branco (___ ou [ ]): preencha os campos ou corrija o texto');
       if (comTest) {
         ctx.t1.validar(erros, 'Testemunha 1', ['nome', 'cpf', 'logradouro', 'numero']);
         ctx.t2.validar(erros, 'Testemunha 2', ['nome', 'cpf', 'logradouro', 'numero']);
@@ -602,48 +767,54 @@
       if (erros.length) return null;
 
       const r = ctx.req.ler(), f = ctx.fech.ler(), s = r.sexo;
-      const assento = ASSENTOS.find((a) => a[0] === tipo)[2];
-      const nomes = tipo.startsWith('B') ? `${up($('#retN1').value)} e ${up($('#retN2').value)}` : up(limpo($('#retN1').value));
-      const rep = up(limpo($('#retRepNome').value));
+      const rp = ctx.repr.ler();
       let qualidade = '';
-      if (q === 'representante') qualidade = `, na qualidade de representante legal de ${rep}`;
-      if (q === 'procurador') qualidade = `, na qualidade de ${gx(s, 'procurador', 'procuradora')} de ${rep}${limpo($('#retProcTxt').value) ? `, conforme procuração ${limpo($('#retProcTxt').value)}` : ''}`;
+      if (q === 'representante') qualidade = `, na qualidade de representante legal de ${rp.nome}, ${qualificacao(rp)}`;
+      if (q === 'procurador') qualidade = `, na qualidade de ${gx(s, 'procurador', 'procuradora')} de ${rp.nome}, ${qualificacao(rp)}${limpo($('#retProcTxt').value) ? `, conforme procuração ${limpo($('#retProcTxt').value)}` : ''}`;
       const blocos = [
-        { p: [R(dest, true)], al: 'e', depois: 16, tam: 11 },
-        { p: [R(r.nome, true), `, ${qualificacao(r)}${qualidade}, vem, por meio deste, requerer a retificação, ${limpo($('#retFund').value)}, do assento de ${assento} de `, R(nomes, true),
-          `, lavrado no Livro ${livroTxt(tipo, limpo($('#retLivro').value))}, fls. ${limpo($('#retFolha').value)}, termo nº ${limpo($('#retTermo').value)}, para que conste:`], ind: 40 },
+        enderecamento(dest),
+        titulo('I – REQUERENTE:'),
+        { p: [`${r.nome}, ${qualificacao(r)}${qualidade}.`], ind: RECUO },
+        titulo('II – REQUERIMENTO:'),
+        ...paragrafosDe(texto),
       ];
-      const letras = 'abcdefghijklmnopqrstuvwxyz';
-      corr.forEach((c, i) => blocos.push({ p: [`${letras[i] || i + 1}) ${c.campo}: onde consta “`, R(up(c.consta), true), '”, deve constar “', R(up(c.deve), true), `”${i === corr.length - 1 ? '.' : ';'}`], esqBloco: 40, depois: 3 }));
-      blocos.push({ p: [`Tudo conforme os documentos comprobatórios anexos. Certifico que os documentos apresentados ${gx(s, 'pelo', 'pela')} requerente são originais.`], ind: 40, antes: 6 });
+      let n = 'III';
+      const nomesT = [];
       if (comTest) {
-        blocos.push({ p: [limpo($('#retMotivo').value)], ind: 40, tam: 10 });
-        [ctx.t1.ler(), ctx.t2.ler()].forEach((t) => blocos.push({ p: [R(t.nome, true), `, ${qualificacao(t, { completo: false })}.`], ind: 40, tam: 10, depois: 3 }));
+        const [a, b] = [ctx.t1.ler(), ctx.t2.ler()];
+        nomesT.push(a.nome, b.nome);
+        blocos.push(titulo('III – TESTEMUNHAS:'), { p: [limpo($('#retMotivo').value)], ind: RECUO, tam: 10 });
+        [a, b].forEach((t) => blocos.push({ p: [`${t.nome}, ${qualificacao(t, { completo: false })}.`], ind: RECUO, tam: 10, depois: 3 }));
+        n = 'IV';
       }
-      blocos.push({ p: ['Termos em que, pede deferimento.'], ind: 40, antes: 4 });
+      blocos.push(titulo(`${n} – FUNDAMENTO JURÍDICO:`), { p: [`O presente requerimento está fundamentado ${FUNDAMENTOS[$('#retFundTipo').value][1]}.`], ind: RECUO });
+      blocos.push({ p: ['Termos em que, pede deferimento.'], ind: RECUO, antes: 4 });
       if ($('#retIsento').checked) blocos.push({ p: [R('ISENTO', true), ' – erro imputável ao cartório (art. 110, § 5º, da Lei nº 6.015/1973).'], tam: 10, antes: 4 });
-      const assReq = { ass: { nome: [R(r.nome, true)], linhas: q === 'proprio' ? [] : [[q === 'representante' ? `Representante legal de ${rep}` : `${gx(s, 'Procurador', 'Procuradora')} de ${rep}`]], esq: 40, larg: 340 } };
-      const assin = [assReq];
+      const linhaQual = q === 'representante' ? [[`Representante legal de ${rp.nome}`]] : q === 'procurador' ? [[`${gx(s, 'Procurador', 'Procuradora')} de ${rp.nome}`]] : [];
+      const assin = [assinaturaCentro(r.nome, linhaQual)];
       if (comTest) {
         const [a, b] = [ctx.t1.ler(), ctx.t2.ler()];
         assin.push({ lado: [{ nome: [R('TESTEMUNHA 1: ', true), R(a.nome, true)], linhas: [[`CPF: ${a.cpf}`]], larg: 215 }, { nome: [R('TESTEMUNHA 2: ', true), R(b.nome, true)], linhas: [[`CPF: ${b.cpf}`]], larg: 215 }] });
       }
+      const comps = ctx.comp.map((c) => c.ler());
       return {
         titulo: 'Requerimento de retificação', arquivo: nomeArquivo('retificacao', r.nome), chave: r.nome,
+        nomes: [r.nome, r.pai, r.mae, rp.nome, rp.pai, rp.mae, up(limpo($('#retN1').value)), up(limpo($('#retN2').value)), ...nomesT,
+          ...comps.flatMap((c) => [c.pai, c.mae, c.nomeCompleto])],
         blocos: blocos.concat(fechamentoBlocos(f, assin)),
       };
     },
   });
 
   // =====================================================================
-  // 2) ALTERAÇÃO DE PRENOME (art. 56)
+  // 2) ALTERAÇÃO DE PRENOME (art. 56) – seções I a IV
   // =====================================================================
   const pre = criarAba({
     nome: 'prenome', raiz: $('#abaPrenome'), id: 'pre',
     montar(raiz) {
       raiz.insertAdjacentHTML('beforeend', `
         <p class="aviso">Só para maiores de 18 anos, e o pedido é sempre pessoal (sem representante ou procurador). A alteração imotivada de prenome pela via extrajudicial só pode ser feita uma vez (art. 56, § 1º, da Lei nº 6.015/1973).</p>
-        <p class="aviso" id="preAvisoNova" hidden>Minuta nova: o requerente mudou, então o livro, a folha e o termo foram zerados.</p>
+        <p class="aviso" id="preAvisoNova" hidden>Minuta nova: o requerente mudou, então o livro, a folha, o termo e o texto foram zerados.</p>
         <p class="erros" id="preMenor" hidden></p>`);
       const destino = blocoDestino(raiz, 'preD');
       raiz.insertAdjacentHTML('beforeend', '<fieldset><legend>Requerente</legend><div id="preReq"></div></fieldset>');
@@ -677,8 +848,8 @@
           </div>
           <label class="opcao"><input type="checkbox" id="preDocsOrig" checked> Na certificação, incluir "Certifico ainda que todos os documentos anexados foram extraídos dos originais."</label>
         </fieldset>`);
+      const texto = blocoTexto(raiz, 'preTexto', 'II – Requerimento: texto que vai sair no documento (pode editar)');
       const fech = blocoFechamento(raiz, 'preF');
-      // nome novo automático
       let nomeEditado = false;
       function sugerir() {
         if (nomeEditado) return;
@@ -692,7 +863,6 @@
         if (!limpo($('#prePrenAtual').value)) $('#prePrenAtual').value = up(limpo(req.el('nome').value)).split(' ')[0] || '';
       });
       $('#preNomeNovo').addEventListener('input', () => { nomeEditado = true; });
-      // aviso de menor
       req.el('nascimento').addEventListener('change', () => {
         const i = idade(req.el('nascimento').value);
         const m = $('#preMenor');
@@ -702,7 +872,11 @@
         const sync = () => { $(n).disabled = $(s).value !== 'sim'; if ($(n).disabled) $(n).value = ''; };
         $(s).addEventListener('change', sync); sync();
       });
-      return { destino, req, fech, campoChave: req.el('nome'), resetNome: () => { nomeEditado = false; } };
+      return { destino, req, fech, texto, campoChave: req.el('nome'), resetNome: () => { nomeEditado = false; } };
+    },
+    textoAuto(ctx) {
+      const r = ctx.req.ler(), g = (m, f) => gx(r.sexo, m, f);
+      return `Com fulcro no disposto pelo artigo 56 da Lei nº 6.015/1973, ${g('o', 'a')} requerente acima ${g('indicado', 'indicada')}, ${g('registrado', 'registrada')} conforme o Livro A-${limpo($('#preLivro').value) || '__'}, fls. ${limpo($('#preFolha').value) || '__'}, termo nº ${limpo($('#preTermo').value) || '__'}, vem, respeitosamente, requerer a V. Sa. a instauração de procedimento para alteração de prenome, substituindo o prenome ${up(limpo($('#prePrenAtual').value)) || '[PRENOME ATUAL]'} por ${up(limpo($('#prePrenNovo').value)) || '[PRENOME NOVO]'}, de modo que passe a ser ${g('identificado', 'identificada')} como: ${up(limpo($('#preNomeNovo').value)) || '[NOME NOVO]'}.`;
     },
     camposZerar: () => [$('#preLivro'), $('#preFolha'), $('#preTermo')],
     limparExtra(ctx) {
@@ -724,41 +898,44 @@
       [['#preIcn', '#preIcnN', 'Nº da ICN'], ['#preRgUf', '#preRgUfN', 'Nº e UF do RG de outro estado'], ['#prePass', '#prePassN', 'Nº do passaporte']].forEach(([s, n, rt]) => {
         if ($(s).value === 'sim' && !limpo($(n).value)) { erros.push(rt); $(n).classList.add('invalido'); }
       });
+      const texto = ctx.texto.ler();
+      if (!limpo(texto)) { erros.push('Texto do requerimento'); ctx.texto.ta.classList.add('invalido'); }
+      if (/\[[A-Z ]+\]|-__,|fls\. __/.test(texto)) erros.push('O texto do requerimento ainda tem partes em branco: preencha os campos ou corrija o texto');
       ctx.fech.validar(erros);
       if (erros.length) return null;
-      const f = ctx.fech.ler(), s = r.sexo, g = (m, fe) => gx(s, m, fe);
+      const f = ctx.fech.ler(), g = (m, fe) => gx(r.sexo, m, fe);
       const docs = [
         $('#preIcn').value === 'sim' ? `possui Identificação Civil Nacional (ICN) nº ${limpo($('#preIcnN').value)}` : 'não possui Identificação Civil Nacional (ICN)',
         $('#preRgUf').value === 'sim' ? `possui cédula de identidade RG emitida em outra unidade da Federação, nº ${limpo($('#preRgUfN').value)}` : 'não possui cédula de identidade RG emitida em outra unidade da Federação',
         $('#prePass').value === 'sim' ? `possui passaporte nº ${limpo($('#prePassN').value)}` : 'não possui passaporte',
       ];
-      const titulo = limpo($('#preTitulo').value);
+      const titEl = limpo($('#preTitulo').value);
       const blocos = [
-        { p: [R('Requerimento de alteração de prenome – art. 56 da Lei nº 6.015/1973', true)], al: 'c', depois: 12 },
-        { p: [R(dest, true)], al: 'e', depois: 14 },
-        { p: [R('I – REQUERENTE:', true)], al: 'e', depois: 2 },
-        { p: [R(r.nome, true), `, ${qualificacao(r)}.`] },
-        { p: [R('II – REQUERIMENTO:', true)], al: 'e', antes: 6, depois: 2 },
-        { p: [`Com fulcro no disposto pelo artigo 56 da Lei nº 6.015/1973, ${g('o', 'a')} requerente acima ${g('indicado', 'indicada')}, ${g('registrado', 'registrada')} conforme o Livro A-${limpo($('#preLivro').value)}, fls. ${limpo($('#preFolha').value)}, termo nº ${limpo($('#preTermo').value)}, vem, respeitosamente, requerer a V. Sa. a INSTAURAÇÃO DE PROCEDIMENTO PARA ALTERAÇÃO DE PRENOME, substituindo o prenome `, R(up(limpo($('#prePrenAtual').value)), true), ' por ', R(up(limpo($('#prePrenNovo').value)), true), `, de modo que passe a ser ${g('identificado', 'identificada')} como: `, R(up(limpo($('#preNomeNovo').value)), true), '.'] },
-        { p: [R('III – DECLARAÇÕES SOB AS PENAS DA LEI:', true)], al: 'e', antes: 6, depois: 2 },
-        { p: [`${g('O', 'A')} requerente DECLARA que:`], depois: 2 },
-        { p: ['a) a alteração ora requerida está de acordo com seu nome atual e que responde civil e criminalmente pela veracidade desta afirmação. Declara, ainda, que não é parte em ação judicial em trâmite sobre alteração de prenome ou, em caso de ação judicial com o referido escopo, que a mesma já foi devidamente arquivada, conforme certidão anexa;'], esqBloco: 20, depois: 2 },
-        { p: [`b) ${docs.join('; ')}${titulo ? `; e seu título de eleitor é o de nº ${titulo}` : ''};`], esqBloco: 20, depois: 2 },
-        { p: [`c) está ${g('ciente', 'ciente')} de que não será admitida outra alteração de prenome por este procedimento diretamente perante Oficial de Registro Civil das Pessoas Naturais, resguardada a via judicial;`], esqBloco: 20, depois: 2 },
-        { p: ['d) está ciente de que deverá promover a alteração nos demais registros que lhe digam respeito, direta ou indiretamente, e nos respectivos documentos de identificação.'], esqBloco: 20 },
-        { p: [R('IV – FUNDAMENTO JURÍDICO:', true)], al: 'e', antes: 6, depois: 2 },
-        { p: ['O presente requerimento está fundamentado no artigo 56 da Lei nº 6.015/1973.'] },
-        { p: ['Por ser verdade, firmo o presente termo.'], antes: 4 },
+        enderecamento(dest),
+        titulo('I – REQUERENTE:'),
+        { p: [`${r.nome}, ${qualificacao(r)}.`], ind: RECUO },
+        titulo('II – REQUERIMENTO:'),
+        ...paragrafosDe(texto),
+        titulo('III – DECLARAÇÕES SOB AS PENAS DA LEI:'),
+        { p: [`${g('O', 'A')} requerente declara que:`], ind: RECUO, depois: 2 },
+        { p: ['a) a alteração ora requerida está de acordo com seu nome atual e que responde civil e criminalmente pela veracidade desta afirmação. Declara, ainda, que não é parte em ação judicial em trâmite sobre alteração de prenome ou, em caso de ação judicial com o referido escopo, que a mesma já foi devidamente arquivada, conforme certidão anexa;'], esqBloco: 40, depois: 2 },
+        { p: [`b) ${docs.join('; ')}${titEl ? `; e seu título de eleitor é o de nº ${titEl}` : ''};`], esqBloco: 40, depois: 2 },
+        { p: ['c) está ciente de que não será admitida outra alteração de prenome por este procedimento diretamente perante Oficial de Registro Civil das Pessoas Naturais, resguardada a via judicial;'], esqBloco: 40, depois: 2 },
+        { p: ['d) está ciente de que deverá promover a alteração nos demais registros que lhe digam respeito, direta ou indiretamente, e nos respectivos documentos de identificação.'], esqBloco: 40 },
+        titulo('IV – FUNDAMENTO JURÍDICO:'),
+        { p: ['O presente requerimento está fundamentado no artigo 56 da Lei nº 6.015/1973.'], ind: RECUO },
+        { p: ['Por ser verdade, firmo o presente termo.'], ind: RECUO, antes: 4 },
       ];
       return {
         titulo: 'Requerimento de alteração de prenome', arquivo: nomeArquivo('alteracao-prenome', r.nome), chave: r.nome,
-        blocos: blocos.concat(fechamentoBlocos(f, [{ ass: { nome: [R(r.nome, true)], linhas: [[`Assinatura ${g('do', 'da')} requerente`]], larg: 340 } }], { docsOriginais: $('#preDocsOrig').checked })),
+        nomes: [r.nome, r.pai, r.mae, up(limpo($('#prePrenAtual').value)), up(limpo($('#prePrenNovo').value)), up(limpo($('#preNomeNovo').value))],
+        blocos: blocos.concat(fechamentoBlocos(f, [assinaturaCentro(r.nome)], { docsOriginais: $('#preDocsOrig').checked })),
       };
     },
   });
 
   // =====================================================================
-  // 3) ALTERAÇÃO DE SOBRENOME (art. 57)
+  // 3) ALTERAÇÃO DE SOBRENOME (art. 57) – seções I a IV
   // =====================================================================
   const HIPOTESES = {
     I: { rot: 'I – inclusão de sobrenome familiar', inciso: 'inciso I' },
@@ -772,7 +949,7 @@
     montar(raiz) {
       raiz.insertAdjacentHTML('beforeend', `
         <p class="aviso">As certidões apresentadas devem ter sido expedidas há no máximo 90 dias (art. 515-I, § 3º, do Código Nacional de Normas – Prov. CNJ 149/2023).</p>
-        <p class="aviso" id="sobAvisoNova" hidden>Minuta nova: o requerente mudou, então o livro, a folha e o termo foram zerados.</p>`);
+        <p class="aviso" id="sobAvisoNova" hidden>Minuta nova: o requerente mudou, então o livro, a folha, o termo e o texto foram zerados.</p>`);
       const destino = blocoDestino(raiz, 'sobD');
       raiz.insertAdjacentHTML('beforeend', `
         <fieldset><legend>Hipótese</legend>
@@ -838,6 +1015,7 @@
         </fieldset>`);
       const req = blocoPessoa($('#sobReq'), 'sobR', {});
       const rep = blocoPessoa($('#sobRep'), 'sobP', { titulo: 'Qualificação do(a) representante', completo: false });
+      const texto = blocoTexto(raiz, 'sobTexto', 'II – Requerimento: texto que vai sair no documento (pode editar)');
       const fech = blocoFechamento(raiz, 'sobF');
       const hip = () => $('#sobHip').value;
       function atualizar() {
@@ -873,7 +1051,6 @@
         verificarAsc();
       }
       function verificarAsc() {
-        // Inclusão do sobrenome do cônjuge: avisa se o nome novo não mantém nenhum sobrenome do nome atual.
         const h = hip(), op = $('#sobOp').value;
         const atual = up(limpo(req.el('nome').value)).split(' ').slice(1).filter((w) => w.length > 2);
         const novo = up(limpo($('#sobNomeNovo').value)).split(' ');
@@ -883,7 +1060,6 @@
       $('#sobOp').addEventListener('change', atualizar);
       [req.el('nome'), $('#sobSob')].forEach((e) => e.addEventListener('input', sugerir));
       $('#sobNomeNovo').addEventListener('input', () => { nomeEditado = true; verificarAsc(); });
-      // menor de 18 → representante; procurador só para maior
       function verIdade() {
         const i = idade(req.el('nascimento').value);
         const menor = i !== null && i < 18;
@@ -898,7 +1074,26 @@
         const d = diasDesde($('#sobProcData').value), m = $('#sobProcVelha');
         if (d !== null && d > 90) { m.textContent = `A escritura foi lavrada há ${d} dias. A representação por procurador exige escritura pública lavrada há menos de 90 dias (art. 515-O do Código Nacional de Normas).`; m.hidden = false; } else m.hidden = true;
       });
-      return { destino, req, rep, fech, hip, atualizar, verIdade, campoChave: req.el('nome'), resetNome: () => { nomeEditado = false; } };
+      return { destino, req, rep, fech, texto, hip, atualizar, verIdade, campoChave: req.el('nome'), resetNome: () => { nomeEditado = false; } };
+    },
+    textoAuto(ctx) {
+      const h = ctx.hip(), H = HIPOTESES[h];
+      const r = ctx.req.ler(), g = (m, fe) => gx(r.sexo, m, fe);
+      if (!H) return '';
+      const op = $('#sobOp').value, sobn = up(limpo($('#sobSob').value)) || '[SOBRENOME]', novo = up(limpo($('#sobNomeNovo').value)) || '[NOME NOVO]';
+      const conj = up(limpo($('#sobConj').value)) || '[NOME]', local = limpo($('#sobCasLocal').value) || '__', data = dataBR($('#sobCasData').value) || '__';
+      const ref = `Livro ${h === 'UE' ? 'E' : 'B'}-${limpo($('#sobCasLivro').value) || '__'}, fls. ${limpo($('#sobCasFolha').value) || '__'}, termo nº ${limpo($('#sobCasTermo').value) || '__'}`;
+      const refNasc = `Livro A-${limpo($('#sobNascLivro').value) || '__'}, fls. ${limpo($('#sobNascFolha').value) || '__'}, termo nº ${limpo($('#sobNascTermo').value) || '__'}`;
+      const acao = `com vistas a ${op === 'excluir' ? 'EXCLUIR' : 'INCLUIR'} o(s) sobrenome(s) `;
+      const solteiro = op === 'excluir' && $('#sobSolteiro').checked ? `, retornando ao uso do nome de ${g('solteiro', 'solteira')}` : '';
+      let contexto;
+      if (h === 'II') contexto = `${g('o', 'a')} requerente, ${g('casado', 'casada')} com ${conj}, cujo casamento realizou-se em ${local} aos ${data}, conforme ${ref}`;
+      else if (h === 'UE') contexto = `${g('o', 'a')} requerente, convivente em união estável com ${conj}, registrada em ${local} aos ${data}, conforme ${ref}`;
+      else if (h === 'III') contexto = `${g('o', 'a')} requerente, cujo casamento com ${conj}, realizado em ${local} aos ${data}, conforme ${ref}, foi dissolvido por ${$('#sobDiss').value}`;
+      else if (h === 'I') contexto = `${g('o', 'a')} requerente, ${g('registrado', 'registrada')} conforme ${refNasc}${limpo($('#sobOrigem').value) ? ` (${limpo($('#sobOrigem').value)})` : ''}`;
+      else contexto = `${g('o', 'a')} requerente, ${g('registrado', 'registrada')} conforme ${refNasc}, em razão de alteração das relações de filiação (${limpo($('#sobOrigem').value) || '___'})`;
+      const extra = h === 'III' ? ', adquirido(s) em razão do casamento' : h === 'I' ? ' familiar(es)' : '';
+      return `Com fulcro no disposto pelo artigo 57, ${H.inciso}, da Lei nº 6.015/1973, ${contexto}, vem, respeitosamente, requerer a V. Sa. a instauração de procedimento para alteração de nome, ${acao}${sobn}${extra}${solteiro}, passando a ser ${g('identificado', 'identificada')} como: ${novo}.`;
     },
     camposZerar: () => [$('#sobCasLivro'), $('#sobCasFolha'), $('#sobCasTermo'), $('#sobNascLivro'), $('#sobNascFolha'), $('#sobNascTermo')],
     limparExtra(ctx) {
@@ -920,66 +1115,47 @@
       if (proc) [['#sobProcNome', 'Nome do(a) procurador(a)'], ['#sobProcTab', 'Tabelionato da procuração'], ['#sobProcData', 'Data da escritura']].forEach(([s, rt]) => {
         if (!limpo($(s).value)) { erros.push(rt); $(s).classList.add('invalido'); }
       });
-      const cas = ['II', 'III', 'UE'].includes(h), nasc = ['I', 'IV'].includes(h);
-      if (cas) [['#sobConj', 'Nome do cônjuge/companheiro'], ['#sobCasLocal', 'Local do casamento/união'], ['#sobCasData', 'Data do casamento/união'], ['#sobCasLivro', 'Livro'], ['#sobCasFolha', 'Folha'], ['#sobCasTermo', 'Termo']].forEach(([s, rt]) => {
-        if (!limpo($(s).value)) { erros.push(rt); $(s).classList.add('invalido'); }
-      });
-      if (nasc) [['#sobNascLivro', 'Livro A'], ['#sobNascFolha', 'Folha'], ['#sobNascTermo', 'Termo']].forEach(([s, rt]) => {
-        if (!limpo($(s).value)) { erros.push(`Registro de nascimento: ${rt}`); $(s).classList.add('invalido'); }
-      });
-      if (h === 'IV' && !limpo($('#sobOrigem').value)) { erros.push('Alteração de filiação que motiva o pedido'); $('#sobOrigem').classList.add('invalido'); }
       [['#sobOp', 'Incluir ou excluir'], ['#sobSob', 'Sobrenome(s) a incluir/excluir'], ['#sobNomeNovo', 'Nome completo que passará a usar']].forEach(([s, rt]) => {
         if (!limpo($(s).value)) { erros.push(rt); $(s).classList.add('invalido'); }
       });
+      const texto = ctx.texto.ler();
+      if (!limpo(texto)) { erros.push('Texto do requerimento'); ctx.texto.ta.classList.add('invalido'); }
+      if (/\[[A-Z ]+\]|-__,|fls\. __| aos __|em __ |\(___\)/.test(texto)) erros.push('O texto do requerimento ainda tem partes em branco: preencha os campos (livro, folha, termo, datas…) ou corrija o texto');
       ctx.fech.validar(erros);
       if (erros.length) return null;
 
-      const f = ctx.fech.ler(), s = r.sexo, g = (m, fe) => gx(s, m, fe);
-      const op = $('#sobOp').value, sobn = up(limpo($('#sobSob').value)), novo = up(limpo($('#sobNomeNovo').value));
+      const f = ctx.fech.ler(), g = (m, fe) => gx(r.sexo, m, fe);
       const H = HIPOTESES[h];
-      // Qualificação + representação
-      const qual = [R(r.nome, true), `, ${qualificacao(r)}`];
+      let qual = `${r.nome}, ${qualificacao(r)}`;
+      const nomesExtra = [];
       if (menor) {
         const p = ctx.rep.ler(), qualRep = $('#sobRepQual').value === 'pai' ? 'seu pai' : 'sua mãe';
-        qual.push(`, menor, neste ato ${g('representado', 'representada')} por ${qualRep}, `, R(p.nome, true), `, ${qualificacao(p, { completo: false })}`);
+        qual += `, menor, neste ato ${g('representado', 'representada')} por ${qualRep}, ${p.nome}, ${qualificacao(p, { completo: false })}`;
+        nomesExtra.push(p.nome);
       }
       if (proc) {
         const pn = up(limpo($('#sobProcNome').value)), pc = limpo($('#sobProcCpf').value);
-        qual.push(`, neste ato ${g('representado', 'representada')} por seu(sua) procurador(a) `, R(pn, true), pc ? `, inscrito(a) no CPF/MF sob o nº ${pc}` : '',
-          `, conforme procuração lavrada no ${limpo($('#sobProcTab').value)}${limpo($('#sobProcLivro').value) ? `, Livro ${limpo($('#sobProcLivro').value)}` : ''}${limpo($('#sobProcFls').value) ? `, fls. ${limpo($('#sobProcFls').value)}` : ''}, em ${dataBR($('#sobProcData').value)}`);
+        qual += `, neste ato ${g('representado', 'representada')} por seu(sua) procurador(a) ${pn}${pc ? `, inscrito(a) no CPF/MF sob o nº ${pc}` : ''}, conforme procuração lavrada no ${limpo($('#sobProcTab').value)}${limpo($('#sobProcLivro').value) ? `, Livro ${limpo($('#sobProcLivro').value)}` : ''}${limpo($('#sobProcFls').value) ? `, fls. ${limpo($('#sobProcFls').value)}` : ''}, em ${dataBR($('#sobProcData').value)}`;
+        nomesExtra.push(pn);
       }
-      qual.push('.');
-      // Texto do requerimento
-      const conj = up(limpo($('#sobConj').value)), local = limpo($('#sobCasLocal').value), data = dataBR($('#sobCasData').value);
-      const ref = `Livro ${h === 'UE' ? 'E' : 'B'}-${limpo($('#sobCasLivro').value)}, fls. ${limpo($('#sobCasFolha').value)}, termo nº ${limpo($('#sobCasTermo').value)}`;
-      const refNasc = `Livro A-${limpo($('#sobNascLivro').value)}, fls. ${limpo($('#sobNascFolha').value)}, termo nº ${limpo($('#sobNascTermo').value)}`;
-      const acao = `com vistas a ${op === 'incluir' ? 'INCLUIR' : 'EXCLUIR'} o(s) sobrenome(s) `;
-      const solteiro = op === 'excluir' && $('#sobSolteiro').checked ? `, retornando ao uso do nome de ${g('solteiro', 'solteira')}` : '';
-      let contexto;
-      if (h === 'II') contexto = `${g('o', 'a')} requerente, ${g('casado', 'casada')} com ${conj}, cujo casamento realizou-se em ${local} aos ${data}, conforme ${ref}`;
-      else if (h === 'UE') contexto = `${g('o', 'a')} requerente, ${g('convivente', 'convivente')} em união estável com ${conj}, registrada em ${local} aos ${data}, conforme ${ref}`;
-      else if (h === 'III') contexto = `${g('o', 'a')} requerente, cujo casamento com ${conj}, realizado em ${local} aos ${data}, conforme ${ref}, foi dissolvido por ${$('#sobDiss').value}`;
-      else if (h === 'I') contexto = `${g('o', 'a')} requerente, ${g('registrado', 'registrada')} conforme ${refNasc}${limpo($('#sobOrigem').value) ? ` (${limpo($('#sobOrigem').value)})` : ''}`;
-      else contexto = `${g('o', 'a')} requerente, ${g('registrado', 'registrada')} conforme ${refNasc}, em razão de alteração das relações de filiação (${limpo($('#sobOrigem').value)})`;
-      const extra = h === 'III' ? ', adquirido(s) em razão do casamento' : h === 'I' ? ' familiar(es)' : '';
       const blocos = [
-        { p: [R('Requerimento de inclusão/exclusão de sobrenome – art. 57 da Lei nº 6.015/1973', true)], al: 'c', depois: 12 },
-        { p: [R(dest, true)], al: 'e', depois: 14 },
-        { p: [R('– REQUERENTE:', true)], al: 'e', depois: 2 },
-        { p: qual },
-        { p: [R('– REQUERIMENTO:', true)], al: 'e', antes: 6, depois: 2 },
-        { p: [`Com fulcro no disposto pelo artigo 57, ${H.inciso}, da Lei nº 6.015/1973, ${contexto}, vem, respeitosamente, requerer a V. Sa. a INSTAURAÇÃO DE PROCEDIMENTO PARA ALTERAÇÃO DE NOME, ${acao}`, R(sobn, true), `${extra}${solteiro}, passando a ser ${g('identificado', 'identificada')} como: `, R(novo, true), '.'] },
-        { p: [R('– DECLARAÇÕES SOB AS PENAS DA LEI:', true)], al: 'e', antes: 6, depois: 2 },
-        { p: [`${g('O', 'A')} REQUERENTE DECLARA que a alteração ora requerida está de acordo com seu nome atual e que responde civil e criminalmente pela veracidade desta afirmação. Declara, ainda, que não é parte em ação judicial em trâmite sobre alteração de sobrenome ou, em caso de ação judicial com o referido escopo, que a mesma já foi devidamente arquivada, conforme certidão anexa.`] },
-        { p: [R('– FUNDAMENTO JURÍDICO:', true)], al: 'e', antes: 6, depois: 2 },
-        { p: [`O presente requerimento está fundamentado no artigo 57, ${H.inciso}, da Lei nº 6.015/1973.`] },
+        enderecamento(dest),
+        titulo('I – REQUERENTE:'),
+        { p: [`${qual}.`], ind: RECUO },
+        titulo('II – REQUERIMENTO:'),
+        ...paragrafosDe(texto),
+        titulo('III – DECLARAÇÕES SOB AS PENAS DA LEI:'),
+        { p: [`${g('O', 'A')} requerente declara que a alteração ora requerida está de acordo com seu nome atual e que responde civil e criminalmente pela veracidade desta afirmação. Declara, ainda, que não é parte em ação judicial em trâmite sobre alteração de sobrenome ou, em caso de ação judicial com o referido escopo, que a mesma já foi devidamente arquivada, conforme certidão anexa.`], ind: RECUO },
+        titulo('IV – FUNDAMENTO JURÍDICO:'),
+        { p: [`O presente requerimento está fundamentado no artigo 57, ${H.inciso}, da Lei nº 6.015/1973.`], ind: RECUO },
       ];
       let ass;
-      if (menor) { const p = ctx.rep.ler(); ass = { ass: { nome: [R(p.nome, true)], linhas: [[`Representante legal de ${r.nome}`]], larg: 340 } }; }
-      else if (proc) ass = { ass: { nome: [R(up(limpo($('#sobProcNome').value)), true)], linhas: [[`Procurador(a) de ${r.nome}`]], larg: 340 } };
-      else ass = { ass: { nome: [R(r.nome, true)], larg: 340 } };
+      if (menor) { const p = ctx.rep.ler(); ass = assinaturaCentro(p.nome, [[`Representante legal de ${r.nome}`]]); }
+      else if (proc) ass = assinaturaCentro(up(limpo($('#sobProcNome').value)), [[`Procurador(a) de ${r.nome}`]]);
+      else ass = assinaturaCentro(r.nome);
       return {
         titulo: 'Requerimento de alteração de sobrenome', arquivo: nomeArquivo('alteracao-sobrenome', r.nome), chave: r.nome,
+        nomes: [r.nome, r.pai, r.mae, up(limpo($('#sobConj').value)), up(limpo($('#sobSob').value)), up(limpo($('#sobNomeNovo').value)), ...nomesExtra],
         blocos: blocos.concat(fechamentoBlocos(f, [ass])),
       };
     },

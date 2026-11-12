@@ -306,6 +306,21 @@
     const reNome = /^Nome d[oa]s?\s+(Registrad|Falecid|Natimort|Contraente|C[ôo]njuge|Noiv|Esposo|Esposa|Marido|Mulher)/i;
     let i = 0, achado;
     while ((achado = valor(reNome, i))) { if (achado.v) r.nomes.push(achado.v.toLocaleUpperCase('pt-BR')); i = achado.i + 1; }
+    // casamento: a CRC usa só "Nome (*):" sob os títulos CÔNJUGE 1 / CÔNJUGE 2, e "Novo nome:" (nome adotado após o casamento)
+    if (!r.nomes.length) {
+      const reNomeSimples = /^Nome\s*(\(\*\))?\s*:/i;
+      const achados = [];
+      let k = 0, a;
+      while ((a = valor(reNomeSimples, k))) { achados.push(a); k = a.i + 1; }
+      r.novosNomes = [];
+      achados.forEach((n, idx) => {
+        if (!n.v) return;
+        r.nomes.push(n.v.toLocaleUpperCase('pt-BR'));
+        const proximo = idx + 1 < achados.length ? achados[idx + 1].i : linhas.length;
+        const nv = valor(/^Novo nome\s*:/i, n.i);
+        r.novosNomes.push(nv && nv.i < proximo && nv.v ? nv.v.toLocaleUpperCase('pt-BR') : '');
+      });
+    }
     const cpf = valor(/^CPF d[oa] (Registrad|Falecid)/i);
     if (cpf && /^\d{11}$/.test(cpf.v.replace(/\D/g, ''))) r.cpf = mascaraCPF(cpf.v);
     return r;
@@ -344,6 +359,7 @@
     if (r.livroTipo && r.livroTipo.startsWith('B')) {
       if (r.nomes[1]) { campo('registrado2').value = r.nomes[1]; dispara(campo('registrado2')); ok.push(`2º contraente: <b>${r.nomes[1]}</b>`); }
       else falta.push('nome do 2º contraente (digite à mão)');
+      (r.novosNomes || []).forEach((nn, n) => { if (nn && r.nomes[n]) falta.push(`o ${n + 1}º contraente tem <b>novo nome</b> no registro (${nn}); usei o nome de antes do casamento (${r.nomes[n]}). Troque se precisar do nome atual`); });
     }
     // 3) cartório pelo CNS
     const c = acharPorCNS(r.cns);

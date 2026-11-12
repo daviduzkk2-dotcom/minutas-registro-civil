@@ -268,6 +268,98 @@
   }
   selUF.addEventListener('change', () => { cidadeAtual = null; preencherCidades(); });
 
+  // ---------- Colar dados da CRC ----------
+  // Lê o texto copiado (Ctrl+A / Ctrl+C) da tela "Visualização de Dados do Registro" da CRC.
+  // A matrícula tem formato nacional (Prov. CNJ 149/2023, art. 473): CNS(6) acervo(2) 55 ano(4) tipo(1) livro(5) folha(3) termo(7) DV(2).
+  const TIPO_MATRICULA = { 1: 'A', 2: 'B', 3: 'B AUX', 4: 'C', 5: 'C AUX' };
+  function lerCRC(texto) {
+    const linhas = texto.split(/\r?\n/).map((l) => l.replace(/ /g, ' ').trim());
+    const ehRotulo = (l) => /^[^:]{2,60}:\s*$/.test(l) || /^[^:]{2,60}:\t/.test(l);
+    // valor de um rótulo: o que vem depois dos ":" na mesma linha ou, se vazio, a próxima linha que não seja outro rótulo
+    function valor(re, aPartirDe = 0) {
+      for (let i = aPartirDe; i < linhas.length; i++) {
+        if (!re.test(linhas[i])) continue;
+        const resto = linhas[i].slice(linhas[i].indexOf(':') + 1).trim();
+        if (resto) return { v: resto, i };
+        for (let j = i + 1; j < linhas.length && j <= i + 2; j++) {
+          if (!linhas[j]) continue;
+          if (ehRotulo(linhas[j]) || /^\(/.test(linhas[j])) return { v: '', i };
+          return { v: linhas[j], i };
+        }
+        return { v: '', i };
+      }
+      return null;
+    }
+    const r = { nomes: [] };
+    const m = texto.match(/Matr[íi]cula\s*:?\s*([\d][\d .\-]{30,60})/i);
+    if (m) {
+      const d = m[1].replace(/\D/g, '');
+      if (d.length >= 32) {
+        r.matricula = d.slice(0, 32);
+        r.cns = d.slice(0, 6); r.acervo = d.slice(6, 8); r.ano = d.slice(10, 14);
+        r.livroTipo = TIPO_MATRICULA[d[14]] || null; r.codTipo = d[14];
+        r.livro = String(+d.slice(15, 20)); r.folha = String(+d.slice(20, 23)); r.termo = String(+d.slice(23, 30));
+      }
+    }
+    const tipo = valor(/^Tipo de Registro\s*:/i); if (tipo) r.tipoTexto = tipo.v;
+    // nome(s): registrado / falecido / contraentes
+    const reNome = /^Nome d[oa]s?\s+(Registrad|Falecid|Natimort|Contraente|C[ôo]njuge|Noiv|Esposo|Esposa|Marido|Mulher)/i;
+    let i = 0, achado;
+    while ((achado = valor(reNome, i))) { if (achado.v) r.nomes.push(achado.v.toLocaleUpperCase('pt-BR')); i = achado.i + 1; }
+    const cpf = valor(/^CPF d[oa] (Registrad|Falecid)/i);
+    if (cpf && /^\d{11}$/.test(cpf.v.replace(/\D/g, ''))) r.cpf = mascaraCPF(cpf.v);
+    return r;
+  }
+  function acharPorCNS(cns) {
+    if (!base) return null;
+    for (const [uf, cidades] of Object.entries(base.uf)) {
+      for (const [cidade, lista] of Object.entries(cidades)) {
+        const it = lista.find((x) => x[0] === cns);
+        if (it) return { uf, cidade, item: it };
+      }
+    }
+    return null;
+  }
+  const dispara = (el) => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+  let crcLido = null;
+  $('#btnCrc').addEventListener('click', () => {
+    const st = $('#crcStatus');
+    const r = lerCRC($('#crcTexto').value);
+    const ok = [], falta = [];
+    if (!r.matricula) {
+      st.className = 'crc-status ruim';
+      st.innerHTML = 'Não achei a <b>matrícula</b> no texto colado. Copie a tela "Visualização de Dados do Registro" inteira (Ctrl+A, Ctrl+C) e cole de novo.';
+      st.hidden = false; return;
+    }
+    // 1) nome(s) primeiro: trocar o registrado zera o livro (minuta nova), então o livro vem depois
+    if (r.nomes[0]) { campo('registrado1').value = r.nomes[0]; dispara(campo('registrado1')); ok.push(`registrado: <b>${r.nomes[0]}</b>`); }
+    else falta.push('nome do registrado (digite à mão)');
+    // 2) tipo de livro, livro, folha, termo
+    if (r.livroTipo) {
+      campo('livroTipo').value = r.livroTipo; dispara(campo('livroTipo'));
+      campo('livro').value = r.livro; campo('folha').value = r.folha; campo('termo').value = r.termo;
+      ['livro', 'folha', 'termo'].forEach((n) => dispara(campo(n)));
+      ok.push(`Livro <b>${r.livroTipo}</b> ${r.livro}, fls. ${r.folha}, termo ${r.termo}`);
+    } else falta.push(`tipo de livro (código ${r.codTipo} na matrícula não é A, B, C ou auxiliar)`);
+    if (r.livroTipo && r.livroTipo.startsWith('B')) {
+      if (r.nomes[1]) { campo('registrado2').value = r.nomes[1]; dispara(campo('registrado2')); ok.push(`2º contraente: <b>${r.nomes[1]}</b>`); }
+      else falta.push('nome do 2º contraente (digite à mão)');
+    }
+    // 3) cartório pelo CNS
+    const c = acharPorCNS(r.cns);
+    if (c) {
+      selUF.value = c.uf; preencherCidades();
+      comboCidade.escolherValor(c.cidade);
+      comboCartorio.escolherValor(c.item[0]);
+      ok.push(`cartório: <b>${c.item[0]} – ${c.cidade}/${c.uf}${c.item[1] ? ' – ' + c.item[1] : ''}</b>`);
+    } else falta.push(`cartório: o CNS ${r.cns} não está na lista de cartórios ativos${r.acervo !== '01' ? ' (acervo incorporado)' : ''}; escolha à mão`);
+    if (r.acervo && r.acervo !== '01') falta.push(`código de acervo ${r.acervo}: registro de acervo incorporado, confira o cartório`);
+    crcLido = r;
+    st.className = 'crc-status' + (falta.length ? ' ruim' : '');
+    st.innerHTML = (ok.length ? `Preenchido: ${ok.join('; ')}.` : '') + (falta.length ? `<br><b>Confira:</b><ul>${falta.map((f) => `<li>${f}</li>`).join('')}</ul>` : '');
+    st.hidden = false;
+  });
+
   // ---------- Datas ----------
   function hojeISO() {
     const d = new Date();
@@ -720,6 +812,7 @@
     txtDest.value = '';
     atualizarModelo(); atualizarLivro(); atualizarMotivo(true);
     nomeGerado = null; avisoLivro(false);
+    $('#crcStatus').hidden = true; crcLido = null;
   }
   $('#btnLimpar').addEventListener('click', () => {
     if (!confirm('Apagar tudo o que foi preenchido?')) return;

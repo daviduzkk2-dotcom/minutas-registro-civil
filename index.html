@@ -6,7 +6,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Minutas do Registro Civil</title>
-<link rel="stylesheet" href="style.css?v=20261113a">
+<link rel="stylesheet" href="style.css?v=20261113b">
 </head>
 <body>
 <header class="topo">
@@ -56,6 +56,18 @@
   </section>
 
   <form id="form" autocomplete="off" novalidate>
+    <!-- COLAR DA CRC -->
+    <fieldset class="crc">
+      <legend>Colar dados da CRC (opcional)</legend>
+      <p class="dica">Na tela "Visualização de Dados do Registro" da CRC, aperte <b>Ctrl+A</b> e <b>Ctrl+C</b>, cole aqui e clique em "Preencher".
+        O site lê a matrícula (tipo de livro, livro, folha, termo e cartório) e o nome do registrado. Nada é enviado: fica só nesta página.</p>
+      <textarea id="crcTexto" name="crcTexto" rows="3" placeholder="Cole aqui o texto copiado da CRC"></textarea>
+      <div class="acoes-crc">
+        <button type="button" id="btnCrc" class="sec">Preencher com os dados da CRC</button>
+      </div>
+      <div id="crcStatus" class="crc-status" role="status" hidden></div>
+    </fieldset>
+
     <!-- MODELO -->
     <fieldset>
       <legend>Modelo</legend>
@@ -194,11 +206,11 @@
   </div>
 </template>
 
-<script src="vendor/pdfmake.min.js?v=20261113a"></script>
-<script src="vendor/vfs_fonts.js?v=20261113a"></script>
-<script src="vendor/docx.umd.js?v=20261113a"></script>
-<script src="vendor/pdf-lib.min.js?v=20261113a"></script>
-<script src="app.js?v=20261113a"></script>
-<script src="novas.js?v=20261113a"></script>
+<script src="vendor/pdfmake.min.js?v=20261113b"></script>
+<script src="vendor/vfs_fonts.js?v=20261113b"></script>
+<script src="vendor/docx.umd.js?v=20261113b"></script>
+<script src="vendor/pdf-lib.min.js?v=20261113b"></script>
+<script src="app.js?v=20261113b"></script>
+<script src="novas.js?v=20261113b"></script>
 </body>
 </html>

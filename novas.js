@@ -24,6 +24,12 @@
     if (h.getMonth() + 1 < m || (h.getMonth() + 1 === m && h.getDate() < d)) i--;
     return i;
   }
+  // Menoridade: até 16 representado, de 16 a 18 assistido (CC, art. 1.634, VII); casamento emancipa (CC, art. 5º, par. único, II).
+  const JA_CASOU = ['casado', 'divorciado', 'viuvo', 'separado'];
+  function situacaoMenor(p) {
+    const i = idade(p.nascimento);
+    return { i, menor: i !== null && i < 18, assistido: i !== null && i >= 16 && i < 18, emancipado: JA_CASOU.includes(p.estadoCivil), convivente: p.estadoCivil === 'convivente' };
+  }
   function diasDesde(iso) {
     if (!iso) return null;
     return Math.floor((Date.now() - new Date(iso + 'T12:00:00').getTime()) / 86400000);
@@ -124,6 +130,8 @@
           if (e && !limpo(e.value)) { erros.push(`${rotulo}: ${e.closest('label') ? e.closest('label').firstChild.textContent.trim() : c}`); e.classList.add('invalido'); }
         });
         if (v('cpf') && !B.cpfValido(v('cpf'))) { erros.push(`${rotulo}: CPF inválido (confira os números)`); el('cpf').classList.add('invalido'); }
+        const nasc = v('nascimento');
+        if (nasc && (+nasc.slice(0, 4) < 1900 || new Date(nasc + 'T12:00:00') > new Date())) { erros.push(`${rotulo}: data de nascimento inválida`); el('nascimento').classList.add('invalido'); }
       },
     };
   }
@@ -457,6 +465,8 @@
       const acao = b.dataset.acao;
       if (acao === 'limpar') { if (confirm('Apagar o que foi preenchido nesta minuta?')) { limpar(); window.scrollTo(0, 0); } return; }
       raiz.querySelectorAll('.invalido').forEach((x) => x.classList.remove('invalido'));
+      // garante o texto automático atualizado (se não foi editado à mão) antes de gerar
+      if (ctx.texto && textoAuto) ctx.texto.atualizar(textoAuto(ctx));
       const erros = [];
       const r = gerar(ctx, erros);
       if (mostrarErros(raiz, id, erros) || !r) return;
@@ -577,6 +587,18 @@
     return s ? s + '.' : '';
   }
 
+  // Mensagem sobre o representado conforme o motivo (erro = impede gerar).
+  function avisoRep(motivo, p) {
+    if (motivo !== 'menor') return null;
+    const sm = situacaoMenor(p);
+    if (sm.i === null) return null;
+    if (!sm.menor) return { erro: true, texto: `O(a) representado(a) tem ${sm.i} anos: não é menor de idade. Para maior incapaz, escolha curatela; se for por procuração, escolha "Procurador(a)".` };
+    if (sm.emancipado) return { erro: true, texto: 'Menor casado(a) ou que já foi casado(a) não é representado: o casamento faz cessar a incapacidade (Código Civil, art. 5º, parágrafo único, II). Ele(a) mesmo(a) pode requerer – escolha "O próprio registrado".' };
+    const extra = sm.convivente ? ' Atenção: a união estável não está entre as hipóteses que fazem cessar a incapacidade do menor no art. 5º, parágrafo único, do Código Civil – confira o estado civil.' : '';
+    if (sm.assistido) return { erro: false, texto: `Menor com ${sm.i} anos: de 16 a 18 anos os pais assistem (Código Civil, art. 1.634, VII). O texto sai como "assistente" e o menor também assina.${extra}` };
+    return { erro: false, texto: `Menor com ${sm.i} anos: representado(a) pelo pai ou pela mãe (Código Civil, art. 1.634, VII).${extra}` };
+  }
+
   const ret = criarAba({
     nome: 'retificacao', raiz: $('#abaRetificacao'), id: 'ret',
     montar(raiz) {
@@ -591,6 +613,15 @@
           </div>
           <div id="retReq"></div>
           <div id="retRepres" hidden>
+            <div class="grade g2" id="retRepMotivoBox">
+              <label>Motivo da representação <select id="retRepMotivo"><option value="" selected>Selecione</option>
+                <option value="menor">Menor de idade (pai ou mãe)</option><option value="tutela">Tutela (tutor/tutora)</option>
+                <option value="curatela">Curatela (curador/curadora)</option><option value="outro">Outro (escrever)</option></select></label>
+              <label id="retRepGrauLbl" hidden>Quem representa <select id="retRepGrau"><option value="mãe" selected>Mãe</option><option value="pai">Pai</option></select></label>
+              <label id="retRepDocLbl" hidden>Termo / processo <input id="retRepDoc" placeholder="ex.: termo de curatela – processo nº 0000000-00.2025.8.26.0126"></label>
+              <label id="retRepOutroLbl" hidden>Qualidade (escreva) <input id="retRepOutro" placeholder="ex.: guardiã judicial"></label>
+            </div>
+            <p class="aviso" id="retRepAviso" hidden></p>
             <label id="retProcLbl">Procuração (onde e quando foi feita) <input id="retProcTxt" placeholder="ex.: lavrada no 1º Tabelião de Notas de X, livro 10, fls. 20, em 01/02/2026"></label>
             <div id="retRepQual"></div>
           </div>
@@ -672,7 +703,20 @@
       raiz.querySelectorAll('[name=retQuem]').forEach((r) => r.addEventListener('change', () => {
         $('#retRepres').hidden = quem() === 'proprio';
         $('#retProcLbl').hidden = quem() !== 'procurador';
+        $('#retRepMotivoBox').hidden = quem() !== 'representante';
+        checarRep();
       }));
+      // Confere idade e estado civil do representado conforme o motivo.
+      function checarRep() {
+        const m = $('#retRepMotivo').value, av = $('#retRepAviso');
+        $('#retRepGrauLbl').hidden = m !== 'menor';
+        $('#retRepDocLbl').hidden = !['tutela', 'curatela'].includes(m);
+        $('#retRepOutroLbl').hidden = m !== 'outro';
+        const msg = quem() === 'representante' ? avisoRep(m, repr.ler()) : null;
+        av.hidden = !msg; if (msg) { av.textContent = msg.texto; av.className = msg.erro ? 'erros' : 'aviso'; }
+      }
+      $('#retRepMotivo').addEventListener('change', checarRep);
+      [repr.el('nascimento'), repr.el('estadoCivil')].forEach((x) => x.addEventListener('change', checarRep));
       const modelo = () => raiz.querySelector('[name=retModelo]:checked').value;
       let motivoEditado = false;
       function motivo(forcar) {
@@ -699,7 +743,7 @@
       ajustarTipo();
       $('#retUsaComp').addEventListener('change', () => { $('#retComp').hidden = !$('#retUsaComp').checked; });
       $('#retUsaCorr').addEventListener('change', () => { $('#retCorrBox').hidden = !$('#retUsaCorr').checked; });
-      return { destino, req, repr, t1, t2, comp, fech, texto, quem, modelo, addLinha, caixa, motivo, ajustarTipo, campoChave: req.el('nome'), resetMotivo: () => { motivoEditado = false; } };
+      return { destino, req, repr, t1, t2, comp, fech, texto, checarRep, quem, modelo, addLinha, caixa, motivo, ajustarTipo, campoChave: req.el('nome'), resetMotivo: () => { motivoEditado = false; } };
     },
     textoAuto(ctx) {
       const tipo = $('#retTipo').value;
@@ -749,6 +793,13 @@
       const q = ctx.quem(), comTest = ctx.modelo() === 'testemunhas';
       ctx.req.validar(erros, 'Requerente', ['nome', 'sexo', 'nacionalidade', 'estadoCivil', 'logradouro', 'numero'].concat(comTest ? [] : ['cpf']));
       if (q !== 'proprio') ctx.repr.validar(erros, 'Representado(a)', ['nome', 'sexo', 'nacionalidade', 'estadoCivil', 'nascimento', 'logradouro', 'numero']);
+      if (q === 'representante') {
+        const m = $('#retRepMotivo').value;
+        if (!m) { erros.push('Motivo da representação'); $('#retRepMotivo').classList.add('invalido'); }
+        if (m === 'outro' && !limpo($('#retRepOutro').value)) { erros.push('Qualidade de quem representa'); $('#retRepOutro').classList.add('invalido'); }
+        const a = avisoRep(m, ctx.repr.ler());
+        if (a && a.erro) erros.push(a.texto);
+      }
       [['#retTipo', 'Tipo de assento'], ['#retLivro', 'Livro nº'], ['#retFolha', 'Folha'], ['#retTermo', 'Termo nº'], ['#retN1', 'Nome que consta no registro']].forEach(([s, r]) => {
         if (!limpo($(s).value)) { erros.push(r); $(s).classList.add('invalido'); }
       });
@@ -769,7 +820,24 @@
       const r = ctx.req.ler(), f = ctx.fech.ler(), s = r.sexo;
       const rp = ctx.repr.ler();
       let qualidade = '';
-      if (q === 'representante') qualidade = `, na qualidade de representante legal de ${rp.nome}, ${qualificacao(rp)}`;
+      const sm = situacaoMenor(rp), motivoRep = $('#retRepMotivo').value, grau = $('#retRepGrau').value;
+      const docRep = limpo($('#retRepDoc').value), outroRep = limpo($('#retRepOutro').value);
+      const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+      let rotuloAss = '';
+      if (q === 'representante') {
+        if (motivoRep === 'menor') {
+          const papel = sm.assistido ? 'assistente' : 'representante legal';
+          qualidade = `, na qualidade de ${grau} e ${papel} de ${rp.nome}, menor de idade, ${qualificacao(rp)}`;
+          rotuloAss = `${cap(grau)} e ${papel} de ${rp.nome}`;
+        } else if (motivoRep === 'tutela' || motivoRep === 'curatela') {
+          const papel = motivoRep === 'tutela' ? gx(s, 'tutor', 'tutora') : gx(s, 'curador', 'curadora');
+          qualidade = `, na qualidade de ${papel} de ${rp.nome}, ${qualificacao(rp)}${docRep ? `, conforme ${docRep}` : ''}`;
+          rotuloAss = `${cap(papel)} de ${rp.nome}`;
+        } else {
+          qualidade = `, na qualidade de ${outroRep} de ${rp.nome}, ${qualificacao(rp)}`;
+          rotuloAss = `${cap(outroRep)} de ${rp.nome}`;
+        }
+      }
       if (q === 'procurador') qualidade = `, na qualidade de ${gx(s, 'procurador', 'procuradora')} de ${rp.nome}, ${qualificacao(rp)}${limpo($('#retProcTxt').value) ? `, conforme procuração ${limpo($('#retProcTxt').value)}` : ''}`;
       const blocos = [
         enderecamento(dest),
@@ -790,8 +858,10 @@
       blocos.push(titulo(`${n} – FUNDAMENTO JURÍDICO:`), { p: [`O presente requerimento está fundamentado ${FUNDAMENTOS[$('#retFundTipo').value][1]}.`], ind: RECUO });
       blocos.push({ p: ['Termos em que, pede deferimento.'], ind: RECUO, antes: 4 });
       if ($('#retIsento').checked) blocos.push({ p: [R('ISENTO', true), ' – erro imputável ao cartório (art. 110, § 5º, da Lei nº 6.015/1973).'], tam: 10, antes: 4 });
-      const linhaQual = q === 'representante' ? [[`Representante legal de ${rp.nome}`]] : q === 'procurador' ? [[`${gx(s, 'Procurador', 'Procuradora')} de ${rp.nome}`]] : [];
+      const linhaQual = q === 'representante' ? [[rotuloAss]] : q === 'procurador' ? [[`${gx(s, 'Procurador', 'Procuradora')} de ${rp.nome}`]] : [];
       const assin = [assinaturaCentro(r.nome, linhaQual)];
+      // De 16 a 18 anos o menor é assistido: ele também assina.
+      if (q === 'representante' && motivoRep === 'menor' && sm.assistido) assin.push(assinaturaCentro(rp.nome, [[gx(rp.sexo, 'Menor assistido', 'Menor assistida')]]));
       if (comTest) {
         const [a, b] = [ctx.t1.ler(), ctx.t2.ler()];
         assin.push({ lado: [{ nome: [R('TESTEMUNHA 1: ', true), R(a.nome, true)], linhas: [[`CPF: ${a.cpf}`]], larg: 215 }, { nome: [R('TESTEMUNHA 2: ', true), R(b.nome, true)], linhas: [[`CPF: ${b.cpf}`]], larg: 215 }] });
@@ -958,8 +1028,8 @@
           <p class="dica" id="sobHipDica"></p>
         </fieldset>
         <fieldset><legend>Requerente</legend><div id="sobReq"></div>
+          <p class="aviso" id="sobMenorAviso" hidden></p>
           <div id="sobMenorBox" hidden>
-            <p class="aviso">Requerente menor de 18 anos: o requerimento sai em nome do menor, representado por pai ou mãe, que assina.</p>
             <label>Quem representa <select id="sobRepQual"><option value="pai">Pai</option><option value="mae" selected>Mãe</option></select></label>
             <div id="sobRep"></div>
           </div>
@@ -1061,13 +1131,19 @@
       [req.el('nome'), $('#sobSob')].forEach((e) => e.addEventListener('input', sugerir));
       $('#sobNomeNovo').addEventListener('input', () => { nomeEditado = true; verificarAsc(); });
       function verIdade() {
-        const i = idade(req.el('nascimento').value);
-        const menor = i !== null && i < 18;
+        const sm = situacaoMenor(req.ler());
+        const menor = sm.menor && !sm.emancipado;
+        const m = $('#sobMenorAviso');
+        m.hidden = !(sm.menor);
+        if (sm.menor) m.textContent = sm.emancipado
+          ? 'Requerente menor, mas casado(a) ou que já foi casado(a): o casamento faz cessar a incapacidade (Código Civil, art. 5º, parágrafo único, II), então ele(a) mesmo(a) assina, sem representante.'
+          : sm.assistido ? `Requerente com ${sm.i} anos: de 16 a 18 anos é assistido(a) pelo pai ou pela mãe (Código Civil, art. 1.634, VII); os dois assinam.`
+            : `Requerente com ${sm.i} anos: representado(a) pelo pai ou pela mãe (Código Civil, art. 1.634, VII), que assina.`;
         $('#sobMenorBox').hidden = !menor;
         $('#sobProcBox').hidden = menor;
         if (menor) { $('#sobProc').checked = false; $('#sobProcCampos').hidden = true; }
       }
-      req.el('nascimento').addEventListener('change', verIdade);
+      [req.el('nascimento'), req.el('estadoCivil')].forEach((x) => x.addEventListener('change', verIdade));
       $('#sobProc').addEventListener('change', () => { $('#sobProcCampos').hidden = !$('#sobProc').checked; });
       $('#sobProcCpf').addEventListener('input', () => { $('#sobProcCpf').value = B.mascaraCPF($('#sobProcCpf').value); });
       $('#sobProcData').addEventListener('change', () => {
@@ -1108,7 +1184,7 @@
       if (!h) { erros.push('Hipótese do art. 57'); $('#sobHip').classList.add('invalido'); }
       ctx.req.validar(erros, 'Requerente', ['nome', 'sexo', 'nacionalidade', 'estadoCivil', 'nascimento', 'logradouro', 'numero']);
       const r = ctx.req.ler();
-      const i = idade(r.nascimento), menor = i !== null && i < 18;
+      const smR = situacaoMenor(r), menor = smR.menor && !smR.emancipado;
       if (!menor) ctx.req.validar(erros, 'Requerente', ['cpf', 'rg']);
       if (menor) ctx.rep.validar(erros, 'Representante', ['nome', 'sexo', 'cpf', 'rg']);
       const proc = !menor && $('#sobProc').checked;
@@ -1130,7 +1206,7 @@
       const nomesExtra = [];
       if (menor) {
         const p = ctx.rep.ler(), qualRep = $('#sobRepQual').value === 'pai' ? 'seu pai' : 'sua mãe';
-        qual += `, menor, neste ato ${g('representado', 'representada')} por ${qualRep}, ${p.nome}, ${qualificacao(p, { completo: false })}`;
+        qual += `, menor de idade, neste ato ${smR.assistido ? g('assistido', 'assistida') : g('representado', 'representada')} por ${qualRep}, ${p.nome}, ${qualificacao(p, { completo: false })}`;
         nomesExtra.push(p.nome);
       }
       if (proc) {
@@ -1150,13 +1226,18 @@
         { p: [`O presente requerimento está fundamentado no artigo 57, ${H.inciso}, da Lei nº 6.015/1973.`], ind: RECUO },
       ];
       let ass;
-      if (menor) { const p = ctx.rep.ler(); ass = assinaturaCentro(p.nome, [[`Representante legal de ${r.nome}`]]); }
+      const assExtra = [];
+      if (menor) {
+        const p = ctx.rep.ler();
+        ass = assinaturaCentro(p.nome, [[`${smR.assistido ? 'Assistente' : 'Representante legal'} de ${r.nome}`]]);
+        if (smR.assistido) assExtra.push(assinaturaCentro(r.nome, [[g('Menor assistido', 'Menor assistida')]]));
+      }
       else if (proc) ass = assinaturaCentro(up(limpo($('#sobProcNome').value)), [[`Procurador(a) de ${r.nome}`]]);
       else ass = assinaturaCentro(r.nome);
       return {
         titulo: 'Requerimento de alteração de sobrenome', arquivo: nomeArquivo('alteracao-sobrenome', r.nome), chave: r.nome,
         nomes: [r.nome, r.pai, r.mae, up(limpo($('#sobConj').value)), up(limpo($('#sobSob').value)), up(limpo($('#sobNomeNovo').value)), ...nomesExtra],
-        blocos: blocos.concat(fechamentoBlocos(f, [ass])),
+        blocos: blocos.concat(fechamentoBlocos(f, [ass, ...assExtra])),
       };
     },
   });

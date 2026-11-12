@@ -227,6 +227,7 @@
     base = j;
     Object.keys(j.uf).forEach((uf) => selUF.add(new Option(uf, uf, uf === 'SP', uf === 'SP')));
     preencherCidades();
+    iniciarInteiro();
     $('#fonteCartorios').textContent = `Lista: ${j.fonte}, baixada em ${j.baixado_em.split('-').reverse().join('/')}. Se o cartório não aparecer, escolha “Outro cartório” e escreva o destinatário.`;
   }).catch(() => {
     $('#fonteCartorios').textContent = 'Não foi possível carregar a lista de cartórios. Escreva o destinatário à mão.';
@@ -705,24 +706,148 @@
     form.querySelectorAll('[data-campo="cepStatus"]').forEach((e) => { e.textContent = ''; });
     ultimoCEP = {};
     $('#data').value = hojeISO();
-    if (urlPrevia) { URL.revokeObjectURL(urlPrevia); urlPrevia = null; }
-    $('#quadroPrevia').removeAttribute('src');
-    $('#previa').hidden = true;
+    if (abaAtual === 'pobreza') {
+      if (urlPrevia) { URL.revokeObjectURL(urlPrevia); urlPrevia = null; }
+      $('#quadroPrevia').removeAttribute('src');
+      $('#previa').hidden = true;
+      window.scrollTo(0, 0);
+    }
     $('#erros').hidden = true;
     if (base) { selUF.value = 'SP'; cidadeAtual = null; preencherCidades(); }
     txtDest.value = '';
     atualizarModelo(); atualizarLivro(); atualizarMotivo(true);
     nomeGerado = null; avisoLivro(false);
-    window.scrollTo(0, 0);
   }
   $('#btnLimpar').addEventListener('click', () => {
     if (!confirm('Apagar tudo o que foi preenchido?')) return;
     limparTudo();
+    window.scrollTo(0, 0);
     $('#avisoInatividade').hidden = true;
   });
 
-  // ---------- Limpeza automática após 10 minutos sem uso ----------
+  // ---------- Abas (escolha da minuta) ----------
+  let abaAtual = 'pobreza';
+  function mostrarAba(nome) {
+    abaAtual = nome;
+    document.querySelectorAll('.aba').forEach((b) => b.classList.toggle('ativa', b.dataset.minuta === nome));
+    form.hidden = nome !== 'pobreza';
+    $('#abaInteiro').hidden = nome !== 'inteiro';
+    if (urlPrevia) { URL.revokeObjectURL(urlPrevia); urlPrevia = null; }
+    $('#quadroPrevia').removeAttribute('src');
+    $('#previa').hidden = true;
+    $('#avisoInatividade').hidden = true;
+  }
+  document.querySelectorAll('.aba').forEach((b) => b.addEventListener('click', () => mostrarAba(b.dataset.minuta)));
+
+  // ---------- Requerimento de inteiro teor (formulário em PDF + cartório de destino) ----------
+  const itUF = $('#itUf'), itTexto = $('#itTexto');
+  let itCidade = null;
+  const itComboCartorio = criarCombo($('#itComboCartorio'), {
+    vazio: 'Escolha a cidade primeiro',
+    aoEscolher: (it) => montarTextoInteiro(it),
+  });
+  const itComboCidade = criarCombo($('#itComboCidade'), {
+    vazio: 'Selecione',
+    aoEscolher: (it) => { itCidade = it ? it.valor : null; preencherCartoriosInteiro(); },
+  });
+  function iniciarInteiro() {
+    if (itUF.options.length) return;
+    Object.keys(base.uf).forEach((uf) => itUF.add(new Option(uf, uf, uf === 'SP', uf === 'SP')));
+    preencherCidadesInteiro();
+  }
+  function preencherCidadesInteiro() {
+    if (!base) return;
+    itCidade = null;
+    itComboCidade.definirItens(Object.keys(base.uf[itUF.value] || {}).map((c) => ({ valor: c, rotulo: c })), 'Selecione');
+  }
+  function preencherCartoriosInteiro() {
+    itTexto.value = '';
+    if (!itCidade) { itComboCartorio.definirItens([], 'Escolha a cidade primeiro'); return; }
+    const lista = base.uf[itUF.value][itCidade];
+    const itens = lista.map(([cns, resumo, nome]) => ({ valor: cns, rotulo: `${cns} - ${itCidade}${resumo ? ` - ${resumo}` : ''}`, detalhe: nome, resumo, nome }));
+    itens.push(OUTRO);
+    itComboCartorio.definirItens(itens, 'Selecione');
+    if (lista.length === 1) itComboCartorio.escolherValor(lista[0][0]);
+  }
+  function montarTextoInteiro(it) {
+    if (!it) { itTexto.value = ''; return; }
+    if (it.valor === 'outro') { itTexto.value = ''; itTexto.focus(); return; }
+    const uf = itUF.value;
+    const cid = itCidade.toLocaleUpperCase('pt-BR');
+    const sozinho = base.uf[uf][itCidade].length === 1;
+    if (it.resumo) itTexto.value = `${cid}/${uf} – ${it.resumo.toLocaleUpperCase('pt-BR')}`;
+    else if (sozinho) itTexto.value = `${cid}/${uf}`;
+    else itTexto.value = `${cid}/${uf} – ${it.nome.toLocaleUpperCase('pt-BR')}`;
+  }
+  itUF.addEventListener('change', preencherCidadesInteiro);
+
+  // Fonte padrão do PDF só tem caracteres latinos: troca o que não couber.
+  const latino = (s) => s.normalize('NFC').replace(/[‐‑‒—]/g, '–').replace(/[^\x20-\x7E -ÿ–]/g, '');
+  async function gerarInteiro(acao) {
+    const caixa = $('#itErros');
+    const texto = latino(itTexto.value.trim().toLocaleUpperCase('pt-BR').replace(/\s+/g, ' '));
+    if (!texto) {
+      caixa.innerHTML = '<b>Falta escolher o cartório</b> (ou escrever o texto da linha "DA COMARCA DE").';
+      caixa.hidden = false; itTexto.classList.add('invalido');
+      return;
+    }
+    caixa.hidden = true; itTexto.classList.remove('invalido');
+    const { PDFDocument, StandardFonts } = window.PDFLib;
+    const modelo = await fetch('modelos/requerimento-inteiro-teor.pdf').then((r) => r.arrayBuffer());
+    const pdf = await PDFDocument.create();
+    pdf.setTitle('Requerimento de inteiro teor'); pdf.setCreator('Minutas do Registro Civil'); pdf.setProducer('Minutas do Registro Civil');
+    const [pg] = await pdf.embedPdf(modelo, [0]);
+    // Reduz a folha original (maior que A4) para caber inteira numa folha A4.
+    const A4 = [595.28, 841.89];
+    const esc = Math.min(A4[0] / pg.width, A4[1] / pg.height);
+    const ox = (A4[0] - pg.width * esc) / 2, oy = (A4[1] - pg.height * esc) / 2;
+    const folha = pdf.addPage(A4);
+    folha.drawPage(pg, { x: ox, y: oy, width: pg.width * esc, height: pg.height * esc });
+    // Linha "DA COMARCA DE ____": começa logo depois do texto (x≈351) e vai até x≈765 no original.
+    const fonte = await pdf.embedFont(StandardFonts.HelveticaBold);
+    const X0 = 358, Y0 = 1188, LARG = 405;
+    let tam = 17;
+    while (tam > 7 && fonte.widthOfTextAtSize(texto, tam) > LARG) tam -= 0.5;
+    folha.drawText(texto, { x: ox + X0 * esc, y: oy + Y0 * esc, size: tam * esc, font: fonte });
+    const blob = new Blob([await pdf.save()], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    if (acao === 'baixar') {
+      const a = document.createElement('a');
+      const cid = (itCidade || 'cartorio').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      a.href = url; a.download = `requerimento-inteiro-teor-${cid}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } else {
+      if (urlPrevia) URL.revokeObjectURL(urlPrevia);
+      urlPrevia = url;
+      $('#quadroPrevia').src = url;
+      $('#previa').hidden = false;
+      $('#previa').scrollIntoView({ behavior: 'smooth' });
+    }
+  }
+  const avisarErro = () => alert('Não foi possível gerar o PDF. Tente de novo.');
+  $('#itVer').addEventListener('click', () => gerarInteiro('ver').catch(avisarErro));
+  $('#itBaixar').addEventListener('click', () => gerarInteiro('baixar').catch(avisarErro));
+  function limparInteiro() {
+    if (base) { itUF.value = 'SP'; preencherCidadesInteiro(); }
+    itComboCartorio.definirItens([], 'Escolha a cidade primeiro');
+    itTexto.value = ''; itTexto.classList.remove('invalido');
+    $('#itErros').hidden = true;
+    if (abaAtual === 'inteiro') {
+      if (urlPrevia) { URL.revokeObjectURL(urlPrevia); urlPrevia = null; }
+      $('#quadroPrevia').removeAttribute('src');
+      $('#previa').hidden = true;
+    }
+  }
+  $('#itLimpar').addEventListener('click', () => {
+    if (!confirm('Apagar o que foi preenchido?')) return;
+    limparInteiro(); window.scrollTo(0, 0);
+  });
+
+  // ---------- Limpeza automática por falta de uso ----------
+  // Declaração de pobreza: 10 minutos. Minutas novas (inteiro teor e as próximas): 40 minutos.
   const LIMITE_INATIVO = 10 * 60 * 1000;
+  const LIMITE_INATIVO_NOVAS = 40 * 60 * 1000;
   let ultimaAtividade = Date.now();
   const marcarAtividade = () => { ultimaAtividade = Date.now(); };
   ['input', 'change', 'keydown', 'pointerdown', 'wheel', 'touchstart'].forEach((ev) => document.addEventListener(ev, marcarAtividade, { passive: true, capture: true }));
@@ -733,12 +858,21 @@
       return el.value.trim() !== '';
     });
   }
+  let pobrezaLimpa = false, inteiroLimpo = false;
+  const marcarSujo = () => { pobrezaLimpa = false; inteiroLimpo = false; };
+  ['input', 'change', 'keydown', 'pointerdown'].forEach((ev) => document.addEventListener(ev, marcarSujo, { passive: true, capture: true }));
   function verificarInatividade() {
-    if (Date.now() - ultimaAtividade < LIMITE_INATIVO) return;
-    ultimaAtividade = Date.now();
-    if (!temAlgoPreenchido() && $('#previa').hidden) return;
-    limparTudo();
-    $('#avisoInatividade').hidden = false;
+    const parado = Date.now() - ultimaAtividade;
+    let limpou = false;
+    if (parado >= LIMITE_INATIVO && !pobrezaLimpa) {
+      pobrezaLimpa = true;
+      if (temAlgoPreenchido() || (abaAtual === 'pobreza' && !$('#previa').hidden)) { limparTudo(); limpou = abaAtual === 'pobreza'; }
+    }
+    if (parado >= LIMITE_INATIVO_NOVAS && !inteiroLimpo) {
+      inteiroLimpo = true;
+      if (itTexto.value.trim() || itCidade || (abaAtual === 'inteiro' && !$('#previa').hidden)) { limparInteiro(); limpou = limpou || abaAtual === 'inteiro'; }
+    }
+    if (limpou) $('#avisoInatividade').hidden = false;
   }
   setInterval(verificarInatividade, 30 * 1000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) verificarInatividade(); });

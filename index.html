@@ -20,9 +20,32 @@
 <main>
   <nav class="minutas" aria-label="Escolha a minuta">
     <button type="button" class="aba ativa" data-minuta="pobreza">Declaração de pobreza – 2ª via de certidão</button>
+    <button type="button" class="aba" data-minuta="inteiro">Requerimento de inteiro teor</button>
   </nav>
 
-  <p class="aviso" id="avisoInatividade" role="status" hidden>O formulário foi apagado automaticamente depois de 10 minutos sem uso. (Clique para fechar.)</p>
+  <p class="aviso" id="avisoInatividade" role="status" hidden>O formulário foi apagado automaticamente por falta de uso. (Clique para fechar.)</p>
+
+  <!-- INTEIRO TEOR: usa o formulário em PDF e só escreve o cartório de destino -->
+  <section id="abaInteiro" hidden>
+    <fieldset>
+      <legend>Cartório para onde vai o requerimento</legend>
+      <div class="grade g-destino">
+        <label>Estado <select id="itUf"></select></label>
+        <div class="rotulo">Cidade <div class="combo" id="itComboCidade"></div></div>
+        <div class="rotulo">Cartório <div class="combo" id="itComboCartorio"></div></div>
+      </div>
+      <label>Texto que sai depois de "DA COMARCA DE" (pode corrigir)
+        <input id="itTexto" autocomplete="off">
+      </label>
+      <p class="dica">O resto do formulário sai em branco, para preencher à mão. A folha sai em A4.</p>
+    </fieldset>
+    <div id="itErros" class="erros" role="alert" hidden></div>
+    <div class="acoes">
+      <button type="button" id="itVer" class="sec">Pré-visualizar</button>
+      <button type="button" id="itBaixar" class="pri">Baixar PDF</button>
+      <button type="button" id="itLimpar" class="perigo">Nova minuta (limpar)</button>
+    </div>
+  </section>
 
   <form id="form" autocomplete="off" novalidate>
     <!-- MODELO -->
@@ -166,6 +189,7 @@
 <script src="vendor/pdfmake.min.js"></script>
 <script src="vendor/vfs_fonts.js"></script>
 <script src="vendor/docx.umd.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

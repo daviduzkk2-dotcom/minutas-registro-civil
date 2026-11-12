@@ -3,7 +3,13 @@
 (function () {
   'use strict';
   const B = window.MinutasBase;
-  if (!B) return;
+  if (!B) {
+    // Página nova com arquivo antigo em cache: avisa em vez de deixar a aba vazia.
+    document.querySelectorAll('.minuta-nova').forEach((s) => {
+      s.innerHTML = '<p class="erros">O site foi atualizado e o navegador ainda está com a versão antiga. Aperte <b>Ctrl+F5</b> para recarregar.</p>';
+    });
+    return;
+  }
   const $ = (sel, raiz = document) => raiz.querySelector(sel);
   const $$ = (sel, raiz = document) => [...raiz.querySelectorAll(sel)];
   const up = (s) => (s || '').toLocaleUpperCase('pt-BR');

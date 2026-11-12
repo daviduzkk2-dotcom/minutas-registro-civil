@@ -212,6 +212,8 @@
   let base = null;
   const selUF = $('#uf'), txtDest = $('#destinatario');
   let cidadeAtual = null;
+  const aoCarregarBase = [];
+  const abasNovas = []; // minutas novas (novas.js): { nome, limpar(), temDados() }
   const OUTRO = { valor: 'outro', rotulo: 'Outro cartório (escrever o destinatário)', detalhe: 'Use se o cartório não estiver na lista' };
 
   const comboCartorio = criarCombo($('#comboCartorio'), {
@@ -228,6 +230,7 @@
     Object.keys(j.uf).forEach((uf) => selUF.add(new Option(uf, uf, uf === 'SP', uf === 'SP')));
     preencherCidades();
     iniciarInteiro();
+    aoCarregarBase.forEach((f) => f(j));
     $('#fonteCartorios').textContent = `Lista: ${j.fonte}, baixada em ${j.baixado_em.split('-').reverse().join('/')}. Se o cartório não aparecer, escolha “Outro cartório” e escreva o destinatário.`;
   }).catch(() => {
     $('#fonteCartorios').textContent = 'Não foi possível carregar a lista de cartórios. Escreva o destinatário à mão.';
@@ -731,7 +734,7 @@
     abaAtual = nome;
     document.querySelectorAll('.aba').forEach((b) => b.classList.toggle('ativa', b.dataset.minuta === nome));
     form.hidden = nome !== 'pobreza';
-    $('#abaInteiro').hidden = nome !== 'inteiro';
+    document.querySelectorAll('[data-aba]').forEach((s) => { s.hidden = s.dataset.aba !== nome; });
     if (urlPrevia) { URL.revokeObjectURL(urlPrevia); urlPrevia = null; }
     $('#quadroPrevia').removeAttribute('src');
     $('#previa').hidden = true;
@@ -871,6 +874,9 @@
     if (parado >= LIMITE_INATIVO_NOVAS && !inteiroLimpo) {
       inteiroLimpo = true;
       if (itTexto.value.trim() || itCidade || (abaAtual === 'inteiro' && !$('#previa').hidden)) { limparInteiro(); limpou = limpou || abaAtual === 'inteiro'; }
+      abasNovas.forEach((a) => {
+        if (a.temDados() || (abaAtual === a.nome && !$('#previa').hidden)) { a.limpar(); limpou = limpou || abaAtual === a.nome; }
+      });
     }
     if (limpou) $('#avisoInatividade').hidden = false;
   }
@@ -883,4 +889,25 @@
   atualizarModelo();
   atualizarLivro();
   atualizarMotivo(true);
+
+  // ---------- Peças compartilhadas com as minutas novas (novas.js) ----------
+  window.MinutasBase = {
+    criarCombo, OUTRO, cpfValido, mascaraCPF, mascaraCEP, dataExtenso, hojeISO, semAcento,
+    base: () => base,
+    quandoCarregarBase(f) { if (base) f(base); else aoCarregarBase.push(f); },
+    registrarAba(a) { abasNovas.push(a); },
+    abaAtual: () => abaAtual,
+    mostrarPdf(blob) {
+      if (urlPrevia) URL.revokeObjectURL(urlPrevia);
+      urlPrevia = URL.createObjectURL(blob);
+      $('#quadroPrevia').src = urlPrevia;
+      $('#previa').hidden = false;
+      $('#previa').scrollIntoView({ behavior: 'smooth' });
+    },
+    esconderPrevia() {
+      if (urlPrevia) { URL.revokeObjectURL(urlPrevia); urlPrevia = null; }
+      $('#quadroPrevia').removeAttribute('src');
+      $('#previa').hidden = true;
+    },
+  };
 })();

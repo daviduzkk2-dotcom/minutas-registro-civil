@@ -21,12 +21,20 @@
   <nav class="minutas" aria-label="Escolha a minuta">
     <button type="button" class="aba ativa" data-minuta="pobreza">Declaração de pobreza – 2ª via de certidão</button>
     <button type="button" class="aba" data-minuta="inteiro">Requerimento de inteiro teor</button>
+    <button type="button" class="aba" data-minuta="retificacao">Retificação</button>
+    <button type="button" class="aba" data-minuta="prenome">Alteração de prenome</button>
+    <button type="button" class="aba" data-minuta="sobrenome">Alteração de sobrenome</button>
   </nav>
 
   <p class="aviso" id="avisoInatividade" role="status" hidden>O formulário foi apagado automaticamente por falta de uso. (Clique para fechar.)</p>
 
   <!-- INTEIRO TEOR: usa o formulário em PDF e só escreve o cartório de destino -->
-  <section id="abaInteiro" hidden>
+  <!-- Minutas novas: o conteúdo é montado por novas.js -->
+  <section class="minuta-nova" data-aba="retificacao" id="abaRetificacao" hidden></section>
+  <section class="minuta-nova" data-aba="prenome" id="abaPrenome" hidden></section>
+  <section class="minuta-nova" data-aba="sobrenome" id="abaSobrenome" hidden></section>
+
+  <section id="abaInteiro" data-aba="inteiro" hidden>
     <fieldset>
       <legend>Cartório para onde vai o requerimento</legend>
       <div class="grade g-destino">
@@ -191,5 +199,6 @@
 <script src="vendor/docx.umd.js"></script>
 <script src="vendor/pdf-lib.min.js"></script>
 <script src="app.js"></script>
+<script src="novas.js"></script>
 </body>
 </html>

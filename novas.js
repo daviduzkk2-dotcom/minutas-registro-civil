@@ -297,7 +297,22 @@
     return out;
   }
 
-  function pdfDoc(titulo, blocos) {
+  const TEXTO_TIMBRADO = 'OFICIAL DE REGISTRO CIVIL DAS PESSOAS NATURAIS E DE INTERDIÇÕES E TUTELAS DA SEDE DA COMARCA DE CARAGUATATUBA, ESTADO DE SÃO PAULO';
+  const RODAPE_TIMBRADO = 'Av. Pernambuco, 150 – Jardim Primavera, Caraguatatuba – SP, CEP 11660-640 – Telefone: (12) 3883-9224';
+  let TIMB = null;
+  async function carregarTimbrado() {
+    if (TIMB) return TIMB;
+    const [logo, oficial] = await Promise.all(['logo', 'oficial'].map((n) => fetch(`img/${n}.png`).then((r) => r.arrayBuffer())));
+    const paraUrl = (buf) => {
+      const b = new Uint8Array(buf); let bin = '';
+      for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+      return 'data:image/png;base64,' + btoa(bin);
+    };
+    TIMB = { logo, oficial, logoUrl: paraUrl(logo), oficialUrl: paraUrl(oficial) };
+    return TIMB;
+  }
+
+  function pdfDoc(titulo, blocos, opts = {}) {
     const runs = (rs, neg) => partes(rs).map((r) => ({ text: r.t, bold: !!(neg || r.b) }));
     const assin = (a) => {
       const larg = a.larg || 320, al = a.centro ? 'center' : 'left';
@@ -320,14 +335,33 @@
         lineHeight: b.lh || 1.15,
       };
     };
-    return {
+    const doc = {
       pageSize: 'A4', pageMargins: [MARGENS.esq, MARGENS.cima, MARGENS.dir, MARGENS.baixo],
       info: { title: titulo, creator: 'Minutas do Registro Civil' },
       defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.2 }, content: blocos.map(render),
     };
+    if (opts.timbrado && TIMB) {
+      // mesmo papel timbrado da declaração de pobreza
+      doc.pageMargins = [MARGENS.esq, 110, MARGENS.dir, 62];
+      doc.header = () => [
+        { margin: [40, 18, 40, 0], columnGap: 16, columns: [
+          { image: TIMB.logoUrl, width: 120 },
+          { stack: [
+            { text: TEXTO_TIMBRADO, alignment: 'center', fontSize: 8.5, bold: true, margin: [0, 8, 0, 6] },
+            { image: TIMB.oficialUrl, width: 170, alignment: 'center' },
+          ] },
+        ] },
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.8, lineColor: '#555' }], margin: [40, 8, 40, 0] },
+      ];
+      doc.footer = () => ({ margin: [40, 18, 40, 0], stack: [
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.8, lineColor: '#555' }], margin: [0, 0, 0, 6] },
+        { text: RODAPE_TIMBRADO, alignment: 'center', fontSize: 8, color: '#444' },
+      ] });
+    }
+    return doc;
   }
 
-  function wordDoc(titulo, blocos) {
+  function wordDoc(titulo, blocos, opts = {}) {
     const X = window.docx;
     const { Paragraph, TextRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, TableLayoutType } = X;
     const pt = (n) => Math.round(n * 20);
@@ -372,10 +406,32 @@
         spacing: { before: pt(b.antes || 0), after: pt(b.depois == null ? 4 : b.depois), line: Math.round((b.lh || 1.15) * 240) },
       }));
     });
+    const secao = { properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: pt(MARGENS.cima), bottom: pt(MARGENS.baixo), left: pt(MARGENS.esq), right: pt(MARGENS.dir) } } }, children: filhos };
+    if (opts.timbrado && TIMB) {
+      const { Header, Footer, ImageRun, VerticalAlign } = X;
+      const LARG = LARG_UTIL;
+      secao.properties.page.margin = { top: pt(105), bottom: pt(60), left: pt(MARGENS.esq), right: pt(MARGENS.dir), header: pt(18), footer: pt(20) };
+      secao.headers = { default: new Header({ children: [
+        new Table({ width: { size: pt(LARG), type: WidthType.DXA }, columnWidths: [pt(136), pt(LARG - 136)], layout: TableLayoutType.FIXED, borders: sem,
+          rows: [new TableRow({ children: [
+            new TableCell({ width: { size: pt(136), type: WidthType.DXA }, borders: sem, verticalAlign: VerticalAlign.CENTER,
+              children: [new Paragraph({ children: [new ImageRun({ data: TIMB.logo, transformation: { width: 150, height: 65 } })] })] }),
+            new TableCell({ width: { size: pt(LARG - 136), type: WidthType.DXA }, borders: sem, verticalAlign: VerticalAlign.CENTER, children: [
+              new Paragraph({ children: [new TextRun({ text: TEXTO_TIMBRADO, bold: true, font: F, size: 16 })], alignment: AlignmentType.CENTER, spacing: { after: pt(4) } }),
+              new Paragraph({ children: [new ImageRun({ data: TIMB.oficial, transformation: { width: 210, height: 29 } })], alignment: AlignmentType.CENTER, spacing: { after: 0 } }),
+            ] }),
+          ] })] }),
+        new Paragraph({ children: [], spacing: { before: 0, after: 0 }, border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: '555555' } } }),
+      ] }) };
+      secao.footers = { default: new Footer({ children: [
+        new Paragraph({ children: [new TextRun({ text: RODAPE_TIMBRADO, font: F, size: 16, color: '444444' })], alignment: AlignmentType.CENTER,
+          border: { top: { style: BorderStyle.SINGLE, size: 6, color: '555555', space: 4 } } }),
+      ] }) };
+    }
     return new X.Document({
       creator: 'Minutas do Registro Civil', title: titulo,
       styles: { default: { document: { run: { font: F, size: 22 } } } },
-      sections: [{ properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: pt(MARGENS.cima), bottom: pt(MARGENS.baixo), left: pt(MARGENS.esq), right: pt(MARGENS.dir) } } }, children: filhos }],
+      sections: [secao],
     });
   }
 
@@ -383,10 +439,10 @@
   const titulo = (t) => ({ p: [t], al: 'e', antes: 8, depois: 2 });           // "I – REQUERENTE:" (sem negrito)
   const enderecamento = (t) => ({ p: [t], al: 'j', neg: true, depois: 12 });  // endereçamento em negrito
   // Texto de caixa editável → parágrafos. Linhas que começam com espaço/tab saem recuadas como item.
-  function paragrafosDe(texto) {
+  function paragrafosDe(texto, { esqItem = 40, tamItem, recuo = RECUO } = {}) {
     return texto.split(/\r?\n/).filter((l) => l.trim()).map((l) => (/^[\t ]{2,}|^\t/.test(l)
-      ? { p: [l.trim()], esqBloco: 40, depois: 3 }
-      : { p: [l.trim()], ind: RECUO }));
+      ? { p: [l.trim()], esqBloco: esqItem, depois: 4, tam: tamItem }
+      : { p: [l.trim()], ind: recuo }));
   }
 
   // Final comum: local/data centralizados, assinatura(s) centralizada(s) e certificação.
@@ -404,19 +460,21 @@
 
   function nomeArquivo(prefixo, nome, ext) {
     const b = (nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    return `${prefixo}-${b || 'minuta'}.${ext}`;
+    return `${prefixo}-${b || 'minuta'}${ext ? '.' + ext : ''}`;
   }
   async function entregar(acao, r) {
     NOMES = r.nomes || [];
+    const opts = { timbrado: !!r.timbrado };
+    if (opts.timbrado) await carregarTimbrado();
     if (acao === 'word') {
-      const blob = await window.docx.Packer.toBlob(wordDoc(r.titulo, r.blocos));
+      const blob = await window.docx.Packer.toBlob(wordDoc(r.titulo, r.blocos, opts));
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url; a.download = r.arquivo + '.docx';
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       return;
     }
-    const pdf = pdfMake.createPdf(pdfDoc(r.titulo, r.blocos));
+    const pdf = pdfMake.createPdf(pdfDoc(r.titulo, r.blocos, opts));
     if (acao === 'pdf') pdf.download(r.arquivo + '.pdf');
     else pdf.getBlob((blob) => B.mostrarPdf(blob));
   }
@@ -1242,5 +1300,301 @@
     },
   });
 
-  window.MinutasNovas = { ret, pre, sob }; // para testes no navegador
+
+  // =====================================================================
+  // 4) NOTA DEVOLUTIVA – fundamentos buscados nas normas do registro civil (texto oficial da base)
+  // =====================================================================
+  const semAc = (x) => (x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const PARADAS = new Set('a o e de da do das dos em no na nos nas para por com sem que os as um uma ao aos se ou sua seu'.split(' '));
+  let NORMAS = null, carregandoNormas = null;
+  function carregarNormas() {
+    if (NORMAS) return Promise.resolve(NORMAS);
+    if (!carregandoNormas) carregandoNormas = fetch('dados/normas-rcpn.json?v=20261113e').then((r) => r.json()).then((j) => {
+      j.itens.forEach((it) => { it.k = semAc(`${it.d} ${it.t}`); });
+      NORMAS = j; return j;
+    });
+    return carregandoNormas;
+  }
+  function buscarNormas(q, filtro) {
+    const toks = semAc(q).split(/[^a-z0-9.]+/).filter((t) => t && !PARADAS.has(t));
+    if (!toks.length) return [];
+    const itens = NORMAS.itens.filter((it) => !filtro || it.n === filtro);
+    // número de dispositivo digitado (ex.: "155", "art 32", "item 155.1")
+    const num = (q.match(/\b(\d+(?:\.\d+)*)\b/) || [])[1];
+    const df = {};
+    toks.forEach((t) => { df[t] = itens.reduce((n, it) => n + (it.k.includes(t) ? 1 : 0), 0); });
+    const N = itens.length;
+    return itens.map((it) => {
+      let sc = 0, achou = 0;
+      toks.forEach((t) => {
+        if (!df[t]) return;
+        let c = 0, i = -1; while ((i = it.k.indexOf(t, i + 1)) !== -1 && c < 8) c++;
+        if (c) { achou++; sc += Math.log(1 + c) * Math.log(1 + N / df[t]); }
+      });
+      if (num && new RegExp(`(art\\.?|item)\\s*${num.replace(/\./g, '\\.')}\\b`).test(semAc(it.d))) sc += 50;
+      sc *= achou / toks.length;
+      return { it, sc };
+    }).filter((x) => x.sc > 0).sort((a, b) => b.sc - a.sc).slice(0, 15).map((x) => x.it);
+  }
+  // Divide o dispositivo em partes citáveis (subitens 155.1, 155.1.1 / parágrafos § 1º, parágrafo único).
+  function partesDe(it) {
+    const t = it.t;
+    const mItem = it.d.match(/item\s+(\d+)/i);
+    let cortes = [];
+    if (mItem) {
+      const re = new RegExp(`(?:^|\\s)(${mItem[1]}(?:\\.\\d+)*)\\.?\\s(?=[A-ZÀ-Ú“"])`, 'g'); let m;
+      while ((m = re.exec(t))) cortes.push({ pos: m.index + (m[0].startsWith(' ') ? 1 : 0), rot: m[1] });
+    } else {
+      const re = /(?:^|\s)(§\s*\d+º?|Parágrafo único)/g; let m;
+      cortes.push({ pos: 0, rot: '' });
+      while ((m = re.exec(t))) cortes.push({ pos: m.index + (m[0].startsWith(' ') ? 1 : 0), rot: m[1].replace(/\s+/g, ' ') });
+    }
+    cortes = cortes.filter((c, i, a) => i === 0 || c.pos > a[i - 1].pos);
+    if (!cortes.length) return [{ rot: '', texto: t }];
+    return cortes.map((c, i) => ({ rot: c.rot, texto: t.slice(c.pos, i + 1 < cortes.length ? cortes[i + 1].pos : t.length).trim() }));
+  }
+  function nomeNorma(n) { return (NORMAS && NORMAS.normas[n]) || n; }
+  // "conforme o art. 32, § 1º, da Lei nº 6.015/1973 (...)" / "conforme as Normas de Serviço..., item 155.1.1"
+  function citacao(it, rots) {
+    const n = nomeNorma(it.n);
+    if (/^item/i.test(it.d)) {
+      const itens = rots.filter(Boolean);
+      const alvo = itens.length ? (itens.length > 1 ? `itens ${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}` : `item ${itens[0]}`) : it.d;
+      return { frase: `conforme as ${n}, ${alvo}, ${itens.length > 1 ? 'os quais dispõem' : 'o qual dispõe'}:`, curta: `${n}, ${alvo}` };
+    }
+    const art = it.d.replace(/^art\.?\s*/i, 'art. ');
+    const pars = rots.filter(Boolean);
+    const alvo = pars.length ? `${art}, ${pars.join(' e ')},` : art;
+    const artigoDe = /^(Lei|Decreto|Código Civil)/.test(n) ? `da ${n}` : `do ${n}`;
+    return { frase: `conforme o ${alvo} ${artigoDe}, que dispõe:`.replace(/,,/g, ','), curta: `${alvo.replace(/,$/, '')} ${artigoDe}` };
+  }
+  function diasUteisApos(inicioISO, dias, semExp) {
+    const d = new Date(inicioISO + 'T12:00:00'); let c = 0;
+    while (c < dias) {
+      d.setDate(d.getDate() + 1);
+      const iso = d.toISOString().slice(0, 10);
+      if (d.getDay() !== 0 && d.getDay() !== 6 && !semExp.has(iso)) c++;
+    }
+    return d.toISOString().slice(0, 10);
+  }
+  function diasCorridosApos(inicioISO, dias) { const d = new Date(inicioISO + 'T12:00:00'); d.setDate(d.getDate() + dias); return d.toISOString().slice(0, 10); }
+  // Feriados nacionais fixos + Sexta-feira Santa (calculada pela Páscoa), no formato dd/mm/aaaa.
+  function pascoa(a) {
+    const b = a % 19, c = Math.floor(a / 100), d = a % 100, e = Math.floor(c / 4), f = c % 4, g = Math.floor((c + 8) / 25), h = Math.floor((c - g + 1) / 3);
+    const i = (19 * b + c - e - h + 15) % 30, k = Math.floor(d / 4), l = d % 4, m = (32 + 2 * f + 2 * k - i - l) % 7, n = Math.floor((b + 11 * i + 22 * m) / 451);
+    const mes = Math.floor((i + m - 7 * n + 114) / 31), dia = ((i + m - 7 * n + 114) % 31) + 1;
+    return new Date(a, mes - 1, dia, 12);
+  }
+  function feriadosEntre(ini, fim) {
+    const out = [];
+    for (let a = ini.getFullYear(); a <= fim.getFullYear(); a++) {
+      const lista = ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '11-20', '12-25'].map((md) => new Date(`${a}-${md}T12:00:00`));
+      const sexta = pascoa(a); sexta.setDate(sexta.getDate() - 2); lista.push(sexta);
+      lista.forEach((d) => { if (d > ini && d <= fim) out.push(d); });
+    }
+    return out.sort((x, y) => x - y).map((d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`);
+  }
+  function lerDatas(txt) {
+    const s2 = new Set();
+    (txt || '').split(/[,;\s]+/).forEach((x) => { const m = x.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if (m) s2.add(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`); });
+    return s2;
+  }
+
+  const nota = criarAba({
+    nome: 'nota', raiz: $('#abaNota'), id: 'not',
+    montar(raiz) {
+      raiz.insertAdjacentHTML('beforeend', `
+        <p class="aviso">Os fundamentos vêm do texto oficial das normas do registro civil (base conferida em <span id="notVerif">…</span>). O site só busca e cita: quem escolhe o dispositivo é você.</p>
+        <p class="aviso" id="notAvisoNova" hidden>Minuta nova: o requerente mudou, então o texto foi refeito.</p>
+        <fieldset><legend>Dados da nota</legend>
+          <label>Documento apresentado <textarea id="notDoc" rows="2" placeholder="ex.: CERTIDÕES DE ASSENTO DE NASCIMENTO DE REGISTROS LAVRADOS NO EXTERIOR"></textarea></label>
+          <div class="grade g2">
+            <label>Requerente (nome) <input id="notReq"></label>
+            <label>Qualidade do requerente (opcional) <input id="notQual" placeholder="ex.: GENITORA"></label>
+          </div>
+          <div class="grade g2">
+            <label>Ato pretendido <input id="notAto" placeholder="ex.: Transcrição de nascimento dos filhos"></label>
+            <label>Data da apresentação <input type="date" id="notDataAp"></label>
+          </div>
+        </fieldset>
+        <fieldset><legend>Exigências</legend>
+          <div id="notExigs"></div>
+          <button type="button" class="sec mini" id="notAdd">+ adicionar exigência</button>
+        </fieldset>
+        <fieldset><legend>Prazo para cumprimento (opcional)</legend>
+          <label class="opcao"><input type="checkbox" id="notPrazoUsa"> Incluir prazo na nota</label>
+          <div id="notPrazoBox" hidden>
+            <p class="dica">A base não traz um prazo próprio do registro civil para o cumprimento de exigências: informe o prazo que o cartório adota.</p>
+            <div class="grade g4">
+              <label>Data do protocolo <input type="date" id="notProt"></label>
+              <label>Quantidade de dias <input id="notDias" inputmode="numeric"></label>
+              <label>Contagem <select id="notTipoDias"><option value="uteis" selected>dias úteis</option><option value="corridos">dias corridos</option></select></label>
+              <label>Vencimento <input id="notVenc" readonly></label>
+            </div>
+            <label>Dias sem expediente (feriados locais), separados por vírgula <input id="notSemExp" placeholder="ex.: 20/11/2026, 08/12/2026"></label>
+          </div>
+        </fieldset>`);
+      const texto = blocoTexto(raiz, 'notTexto', 'Razões da devolução: texto que vai sair no documento (pode editar)');
+      raiz.insertAdjacentHTML('beforeend', `
+        <fieldset><legend>Local, data e assinatura</legend>
+          <div class="grade g4">
+            <label>Cidade <input id="notLocal" value="Caraguatatuba"></label>
+            <label>Data <input type="date" id="notData"></label>
+            <label>Nome de quem assina <input id="notEsc"></label>
+            <label>Cargo <select id="notCargo"><option value="" selected>Selecione</option>${CARGOS.map((c) => `<option>${c}</option>`).join('')}</select></label>
+          </div>
+        </fieldset>`);
+      $('#notData').value = B.hojeISO(); $('#notDataAp').value = B.hojeISO();
+      const caixa = $('#notExigs');
+      const opcoesNorma = () => `<option value="">Todas as normas</option>` + Object.entries(NORMAS ? NORMAS.normas : {}).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+      function addExig() {
+        const d = document.createElement('div');
+        d.className = 'exig';
+        d.innerHTML = `
+          <div class="exig-cab"><h3></h3><button type="button" class="remover" title="Remover esta exigência" aria-label="Remover">×</button></div>
+          <label>O que foi constatado <textarea data-k="razao" rows="2" placeholder="ex.: não foram apresentadas as certidões traduzidas por tradutor público juramentado inscrito em junta comercial brasileira"></textarea></label>
+          <div class="grade g-busca">
+            <label>Buscar fundamento nas normas <input data-k="busca" placeholder="ex.: tradutor juramentado traslado / item 155 / art. 32"></label>
+            <label>Norma <select data-k="filtro">${opcoesNorma()}</select></label>
+          </div>
+          <div class="resultados" data-k="res"></div>
+          <div class="fundamento" data-k="fund" hidden></div>
+          <label>O que deve ser apresentado ou providenciado <textarea data-k="prov" rows="2" placeholder="ex.: Apresentar a tradução das certidões feita por tradutor público inscrito na Junta Comercial."></textarea></label>`;
+        caixa.appendChild(d);
+        d.dados = { it: null, rots: [] };
+        numerar();
+        const busca = d.querySelector('[data-k=busca]'), filtro = d.querySelector('[data-k=filtro]'), res = d.querySelector('[data-k=res]');
+        let t = null;
+        const procurar = () => {
+          clearTimeout(t);
+          t = setTimeout(async () => {
+            if (!busca.value.trim()) { res.innerHTML = ''; return; }
+            res.innerHTML = '<p class="dica">Buscando…</p>';
+            await carregarNormas();
+            if (filtro.options.length <= 1) filtro.innerHTML = opcoesNorma();
+            const achados = buscarNormas(busca.value, filtro.value);
+            res.innerHTML = achados.length ? achados.map((it, i) => `
+              <div class="res-item">
+                <div><b>${esc(nomeNorma(it.n).split(' (')[0])} – ${esc(it.d)}</b> <a href="${esc(it.u)}" target="_blank" rel="noopener noreferrer">texto oficial</a></div>
+                <div class="res-texto">${esc(it.t.slice(0, 320))}${it.t.length > 320 ? '…' : ''}</div>
+                <button type="button" class="sec mini" data-usar="${i}">Usar este</button>
+              </div>`).join('') : '<p class="dica">Nada encontrado. Tente outras palavras ou escolha outra norma.</p>';
+            res.querySelectorAll('[data-usar]').forEach((b) => b.addEventListener('click', () => escolher(d, achados[+b.dataset.usar])));
+          }, 250);
+        };
+        busca.addEventListener('input', procurar);
+        filtro.addEventListener('change', procurar);
+        d.querySelector('.remover').addEventListener('click', () => { if (caixa.children.length > 1) { d.remove(); numerar(); ctxRecalc(); } });
+      }
+      function escolher(d, it) {
+        const partes = partesDe(it);
+        d.dados = { it, partes, rots: [] };
+        const f = d.querySelector('[data-k=fund]');
+        f.hidden = false;
+        f.innerHTML = `
+          <div><b>Fundamento escolhido:</b> ${esc(nomeNorma(it.n))} – ${esc(it.d)}
+            (<a href="${esc(it.u)}" target="_blank" rel="noopener noreferrer">texto oficial</a>, conferido em ${esc(B.dataExtenso ? it.v.split('-').reverse().join('/') : it.v)})
+            <button type="button" class="sec mini" data-trocar>Trocar</button></div>
+          <p class="dica">${partes.length > 1 ? 'Marque o(s) trecho(s) que vão ser citados na nota:' : 'Este trecho vai ser citado na nota:'}</p>
+          ${partes.map((p2, i) => `<label class="opcao trecho"><input type="checkbox" data-parte="${i}" ${partes.length === 1 ? 'checked' : ''}> <span><b>${esc(p2.rot || (i === 0 ? 'caput' : ''))}</b> ${esc(p2.texto)}</span></label>`).join('')}`;
+        d.querySelector('[data-k=res]').innerHTML = '';
+        f.querySelector('[data-trocar]').addEventListener('click', () => { d.dados = { it: null, rots: [] }; f.hidden = true; f.innerHTML = ''; ctxRecalc(); });
+        f.querySelectorAll('[data-parte]').forEach((cb) => cb.addEventListener('change', ctxRecalc));
+        ctxRecalc();
+      }
+      function numerar() { [...caixa.children].forEach((d, i) => { d.querySelector('h3').textContent = `Exigência ${i + 1}`; }); }
+      let ctxRecalc = () => {};
+      addExig();
+      $('#notAdd').addEventListener('click', addExig);
+      // Feriados nacionais (e Sexta-feira Santa) entram sozinhos nos dias sem expediente; o campo continua editável.
+      let semExpEditado = false;
+      $('#notSemExp').addEventListener('input', () => { semExpEditado = true; });
+      function preencherFeriados() {
+        if (semExpEditado || !$('#notProt').value) return;
+        const ini = new Date($('#notProt').value + 'T12:00:00'), fim = new Date(ini); fim.setDate(fim.getDate() + 180);
+        $('#notSemExp').value = feriadosEntre(ini, fim).join(', ');
+      }
+      $('#notPrazoUsa').addEventListener('change', () => {
+        $('#notPrazoBox').hidden = !$('#notPrazoUsa').checked;
+        if (!$('#notProt').value) $('#notProt').value = $('#notDataAp').value;
+        preencherFeriados();
+      });
+      $('#notProt').addEventListener('change', preencherFeriados);
+      // carrega as normas quando a aba é aberta
+      document.querySelector('.aba[data-minuta=nota]').addEventListener('click', () => carregarNormas().then((j) => {
+        $('#notVerif').textContent = j.verificado_em.split('-').reverse().join('/');
+        caixa.querySelectorAll('[data-k=filtro]').forEach((f) => { if (f.options.length <= 1) f.innerHTML = opcoesNorma(); });
+      }));
+      return { texto, caixa, addExig, numerar, campoChave: $('#notReq'), setRecalc: (f) => { ctxRecalc = f; }, resetFeriados: () => { semExpEditado = false; } };
+    },
+    textoAuto(ctx) {
+      const exigs = [...ctx.caixa.children].map((d) => {
+        const sel = d.dados.it ? [...d.querySelectorAll('[data-parte]')].filter((c) => c.checked).map((c) => d.dados.partes[+c.dataset.parte]) : [];
+        return { razao: limpo(d.querySelector('[data-k=razao]').value).replace(/\.$/, ''), prov: limpo(d.querySelector('[data-k=prov]').value), it: d.dados.it, sel };
+      });
+      const doc = limpo($('#notDoc').value) || '[DOCUMENTO]', ato = limpo($('#notAto').value);
+      const linhas = [];
+      const intro = `Em ${dataBR($('#notDataAp').value) || '__/__/____'}, foi apresentado nesta Serventia: ${doc}${ato ? `, para ${ato.charAt(0).toLowerCase() + ato.slice(1)}` : ''}`;
+      const varias = exigs.length > 1;
+      linhas.push(varias ? `${intro}, sendo necessário o cumprimento das seguintes exigências:` : `${intro}.`);
+      exigs.forEach((e, i) => {
+        const pre = varias ? `${i + 1}. ` : '';
+        const razao = e.razao || '[O QUE FOI CONSTATADO]';
+        if (e.it && e.sel.length) {
+          const c = citacao(e.it, e.sel.map((p2) => p2.rot));
+          linhas.push(`${pre}${razao}, ${c.frase}`);
+          e.sel.forEach((p2) => linhas.push(`\t“${p2.texto}”`));
+        } else linhas.push(`${pre}${razao}.`);
+        if (e.prov) linhas.push(e.prov);
+      });
+      if ($('#notPrazoUsa').checked) {
+        const n = parseInt($('#notDias').value, 10), prot = $('#notProt').value;
+        if (n > 0 && prot) {
+          const uteis = $('#notTipoDias').value === 'uteis';
+          const venc = uteis ? diasUteisApos(prot, n, lerDatas($('#notSemExp').value)) : diasCorridosApos(prot, n);
+          $('#notVenc').value = dataBR(venc);
+          linhas.push(`Prazo para cumprimento das exigências: ${n} ${uteis ? (n === 1 ? 'dia útil' : 'dias úteis') : (n === 1 ? 'dia corrido' : 'dias corridos')}, contados do protocolo em ${dataBR(prot)}, com vencimento em ${dataBR(venc)}.`);
+        } else { $('#notVenc').value = ''; linhas.push('Prazo para cumprimento das exigências: [INFORME O PRAZO].'); }
+      }
+      return linhas.join('\n');
+    },
+    limparExtra(ctx) {
+      ctx.caixa.innerHTML = ''; ctx.addExig();
+      $('#notData').value = B.hojeISO(); $('#notDataAp').value = B.hojeISO(); $('#notLocal').value = 'Caraguatatuba';
+      $('#notPrazoBox').hidden = true; ctx.resetFeriados();
+    },
+    gerar(ctx, erros) {
+      [['#notDoc', 'Documento apresentado'], ['#notReq', 'Requerente'], ['#notAto', 'Ato pretendido'], ['#notDataAp', 'Data da apresentação'], ['#notData', 'Data da nota'], ['#notEsc', 'Nome de quem assina'], ['#notCargo', 'Cargo']].forEach(([s2, r]) => {
+        if (!limpo($(s2).value)) { erros.push(r); $(s2).classList.add('invalido'); }
+      });
+      const semFund = [];
+      [...ctx.caixa.children].forEach((d, i) => {
+        if (!limpo(d.querySelector('[data-k=razao]').value)) { erros.push(`Exigência ${i + 1}: o que foi constatado`); d.querySelector('[data-k=razao]').classList.add('invalido'); }
+        const marcados = d.dados.it ? [...d.querySelectorAll('[data-parte]')].some((c) => c.checked) : false;
+        if (d.dados.it && !marcados) erros.push(`Exigência ${i + 1}: marque o trecho da norma que vai ser citado`);
+        if (!d.dados.it) semFund.push(i + 1);
+      });
+      const texto = ctx.texto.ler();
+      if (!limpo(texto)) { erros.push('Texto das razões da devolução'); ctx.texto.ta.classList.add('invalido'); }
+      if (/\[[A-ZÀ-Ú ]+\]|__\/__/.test(texto)) erros.push('O texto ainda tem partes em branco ([…] ou __/__): preencha os campos ou corrija o texto');
+      if (erros.length) return null;
+      if (semFund.length && !confirm(`A(s) exigência(s) ${semFund.join(', ')} está(ão) sem fundamento nas normas. Gerar assim mesmo?`)) { erros.push('Escolha um fundamento para cada exigência (ou confirme que pode ir sem).'); return null; }
+      const req = up(limpo($('#notReq').value)), qual = up(limpo($('#notQual').value));
+      const blocos = [
+        { p: [R('NOTA DEVOLUTIVA', true)], al: 'c', tam: 12, depois: 14 },
+        { p: [R('DOCUMENTO APRESENTADO: ', true), up(limpo($('#notDoc').value))], al: 'j', depois: 8 },
+        { p: [R('Requerente: ', true), req, qual ? ` (${qual})` : ''], al: 'e', depois: 8 },
+        { p: [R('Ato pretendido: ', true), limpo($('#notAto').value)], al: 'e', depois: 10 },
+        { p: [R('RAZÕES DA DEVOLUÇÃO:', true)], al: 'e', depois: 4 },
+        ...paragrafosDe(texto, { esqItem: 150, tamItem: 9.5, recuo: 40 }),
+        { p: [`${limpo($('#notLocal').value)}, ${dataBR($('#notData').value)}`], al: 'c', antes: 14, depois: 0 },
+        { ass: { nome: [limpo($('#notEsc').value)], linhas: [[R($('#notCargo').value, true)]], larg: 260, centro: true, antes: 34, tam: 10.5 } },
+      ];
+      return { titulo: 'Nota devolutiva', arquivo: nomeArquivo('nota-devolutiva', req), chave: req, nomes: [req], timbrado: true, blocos };
+    },
+  });
+  // recalcula o texto quando muda o trecho escolhido ou remove exigência
+  nota.setRecalc(() => nota.recalcular && nota.recalcular());
+
+  window.MinutasNovas = { ret, pre, sob, nota }; // para testes no navegador
 })();

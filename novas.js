@@ -1365,7 +1365,7 @@
     const art = it.d.replace(/^art\.?\s*/i, 'art. ');
     const pars = rots.filter(Boolean);
     const alvo = pars.length ? `${art}, ${pars.join(' e ')},` : art;
-    const artigoDe = /^(Lei|Decreto|Código Civil)/.test(n) ? `da ${n}` : `do ${n}`;
+    const artigoDe = /^Lei\b/.test(n) ? `da ${n}` : `do ${n}`; // Lei → "da"; Código, Decreto-Lei, Estatuto → "do"
     return { frase: `conforme o ${alvo} ${artigoDe}, que dispõe:`.replace(/,,/g, ','), curta: `${alvo.replace(/,$/, '')} ${artigoDe}` };
   }
   function diasUteisApos(inicioISO, dias, semExp) {

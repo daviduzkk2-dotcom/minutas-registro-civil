@@ -261,10 +261,12 @@
     const uf = selUF.value;
     const cid = cidadeAtual.toLocaleUpperCase('pt-BR');
     const sozinho = base.uf[uf][cidadeAtual].length === 1;
-    // O CNS não vai para o PDF: o destinatário leva só cidade e subdistrito/distrito.
-    if (it.resumo) txtDest.value = `OFICIAL DE REGISTRO CIVIL DAS PESSOAS NATURAIS DE ${cid}/${uf} – ${it.resumo.toLocaleUpperCase('pt-BR')}`;
-    else if (sozinho) txtDest.value = `OFICIAL DE REGISTRO CIVIL DAS PESSOAS NATURAIS DE ${cid}/${uf}`;
-    else txtDest.value = `${it.nome.toLocaleUpperCase('pt-BR')} – ${cid}/${uf}`;
+    // O destinatário termina com o CNS do cartório entre parênteses, ex.: ... – BARBACENA/MG (036012)
+    const cns = ` (${it.valor})`;
+    const oficio = 'OFÍCIO DO REGISTRO CIVIL DAS PESSOAS NATURAIS E DE INTERDIÇÕES E TUTELAS';
+    if (it.resumo) txtDest.value = `${oficio} – ${cid}/${uf} – ${it.resumo.toLocaleUpperCase('pt-BR')}${cns}`;
+    else if (sozinho) txtDest.value = `${oficio} – ${cid}/${uf}${cns}`;
+    else txtDest.value = `${it.nome.toLocaleUpperCase('pt-BR')} – ${cid}/${uf}${cns}`;
   }
   selUF.addEventListener('change', () => { cidadeAtual = null; preencherCidades(); });
 

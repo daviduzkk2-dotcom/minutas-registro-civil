@@ -351,6 +351,12 @@ const cx_ = i => XM + (i + 0.5) * G, cz_ = j => YM + (j + 0.5) * G;
 function decode(rle) { const a = new Int16Array(NX * NY); let p = 0; for (let k = 0; k < rle.length; k += 2) { a.fill(rle[k], p, p + rle[k + 1]); p += rle[k + 1]; } return a; }
 const ROOM = { 1: decode(R.r1), 2: decode(R.r2) };
 const RN = { 1: R.n1, 2: R.n2 };
+/* terraço ligado ao jardim superior (a extração deixava uma fresta de 15 cm com guarda-corpo dos dois lados) */
+(function ligaTerraco() {
+  const id = R.n2.indexOf('Terraço') + 1;
+  for (let j = cj(16.9); j <= cj(17.2); j++) for (let i = ci(10.06); i <= ci(11.0); i++) if (!ROOM[2][j * NX + i]) ROOM[2][j * NX + i] = id;
+  D.slab2.push([10.05, 16.9, 11.05, 17.2]);
+})();
 function roomAt(L, x, z) { const i = ci(x), j = cj(z); if (i < 0 || j < 0 || i >= NX || j >= NY) return 0; return ROOM[L][j * NX + i]; }
 function roomName(L, id) { return id > 0 ? RN[L][id - 1] : ''; }
 
@@ -381,6 +387,70 @@ const CFG = {
 };
 function cfgOf(L, id) { return id > 0 ? CFG[L][RN[L][id - 1]] || null : null; }
 function floorY(L, id) { const c = cfgOf(L, id); return c && c.y !== undefined ? c.y : BASE[L]; }
+
+/* ====== telhado: águas planas a partir da planta de cobertura ======
+   Cada água é um plano que sobe 35 % a partir do seu beiral. As da casa vêm do PDF (D.roof); o beiral de cada uma é a
+   aresta que fica no contorno da cobertura (D.bd). Fundos (duas meias-águas) e garagem (três águas e oitão na divisa)
+   são definidos aqui. */
+const INC = 0.35, ESP_T = 0.15;
+const AGUAS = (function () {
+  const out = [];
+  const perto = (p, bd) => { let m = 1e9; for (const q of bd) { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < m) m = d; } return m; };
+  for (const r of D.roof) {
+    if (r.g !== 'casa') continue;
+    const v = r.v, bd = D.bd.casa; let best = null, bl = 0;
+    for (let i = 0; i < v.length; i++) {
+      const a = v[i], b = v[(i + 1) % v.length], m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (perto(a, bd) < 0.3 && perto(b, bd) < 0.3 && perto(m, bd) < 0.3 && l > bl) { bl = l; best = [a, b]; }
+    }
+    if (best) out.push({ v, e: D.eave.casa, ab: best, nome: 'casa' });
+  }
+  const f = (v, a, b, e, nome) => out.push({ v, e, ab: [a, b], nome });
+  f([[5.63, -0.02], [18.73, -0.02], [18.73, 4.48], [5.63, 4.48]], [5.63, 4.48], [18.73, 4.48], D.eave.fundos, 'fundos');
+  f([[-0.02, -0.02], [5.63, -0.02], [5.63, 5.53], [-0.02, 5.53]], [-0.02, 5.53], [5.63, 5.53], D.eave.fundos, 'fundos');
+  const ge = D.eave.garagem, za = 23.74, zb = 30.0, xa = 14.15, xc = 18.75, zr = (za + zb) / 2, xr = xa + (zb - za) / 2;
+  f([[xa, za], [xc, za], [xc, zr], [xr, zr]], [xa, za], [xc, za], ge, 'garagem');
+  f([[xa, zb], [xr, zr], [xc, zr], [xc, zb]], [xa, zb], [xc, zb], ge, 'garagem');
+  f([[xa, za], [xr, zr], [xa, zb]], [xa, za], [xa, zb], ge, 'garagem');
+  for (const a of out) {
+    const [p, q] = a.ab, dx = q[0] - p[0], dz = q[1] - p[1], l = Math.hypot(dx, dz);
+    a.ux = dx / l; a.uz = dz / l; a.p = p;
+    let cx = 0, cz = 0; for (const s of a.v) { cx += s[0] / a.v.length; cz += s[1] / a.v.length; }
+    let nx = -a.uz, nz = a.ux; if ((cx - p[0]) * nx + (cz - p[1]) * nz < 0) { nx = -nx; nz = -nz; }
+    a.nx = nx; a.nz = nz;
+    a.h = (x, z) => a.e + INC * ((x - p[0]) * nx + (z - p[1]) * nz);
+    a.x0 = Math.min(...a.v.map(s => s[0])); a.x1 = Math.max(...a.v.map(s => s[0])); a.z0 = Math.min(...a.v.map(s => s[1])); a.z1 = Math.max(...a.v.map(s => s[1]));
+  }
+  return out;
+})();
+function aguaEm(x, z, soBaixas) {
+  for (const a of AGUAS) { if (soBaixas && a.e > 5) continue; if (x >= a.x0 - 1e-6 && x <= a.x1 + 1e-6 && z >= a.z0 - 1e-6 && z <= a.z1 + 1e-6 && pontoEmPoligono(x, z, a.v)) return a; }
+  return null;
+}
+function telhaEm(x, z, soBaixas) { const a = aguaEm(x, z, soBaixas); return a ? a.h(x, z) : NaN; }
+
+/* paredes que sobem até o telhado: cortadas em pedaços de 10 cm e acabando logo abaixo da telha (sem frestas nem pontas
+   furando o telhado). As paredes do superior descem até a laje (+3,22) para não deixar fresta entre os pavimentos. */
+(function aparaParedes() {
+  for (const L of [1, 2]) {
+    const lim = L === 1 ? 3.30 : 6.15, out = [];
+    for (const b of D['B' + L]) {
+      const [x0, z0, x1, z1, y0, y1] = b; const yb = L === 2 ? Math.min(y0, 3.22) : y0;
+      if (y1 <= lim) { out.push([x0, z0, x1, z1, yb, y1]); continue; }
+      // pedaços múltiplos da grade de 5 cm (as faces das paredes são desenhadas célula a célula: fora da grade sobram frestas)
+      const ax = (x1 - x0) >= (z1 - z0), len = ax ? x1 - x0 : z1 - z0, nc = Math.max(1, Math.round(len / G)), n = Math.ceil(nc / 2);
+      for (let k = 0; k < n; k++) {
+        const b0 = ax ? x0 : z0, a0 = k === 0 ? b0 : b0 + 2 * G * k, a1 = k === n - 1 ? b0 + len : b0 + 2 * G * (k + 1);
+        const xa = ax ? a0 : x0, xb = ax ? a1 : x1, za = ax ? z0 : a0, zb = ax ? z1 : a1;
+        let t = Infinity;
+        for (const [px, pz] of [[xa, za], [xb, za], [xa, zb], [xb, zb], [(xa + xb) / 2, (za + zb) / 2]]) { const h = telhaEm(px, pz, L === 1); if (h === h && h < t) t = h; }
+        const top = t < Infinity ? Math.max(lim, t - 0.05) : (L === 2 ? Math.min(y1, lim + 0.1) : y1);   // sem telhado em cima (vazio do jardim interno): termina no forro
+        out.push([xa, za, xb, zb, yb, top]);
+      }
+    }
+    D['B' + L] = out;
+  }
+})();
 
 /* ====== caixas de parede ====== */
 const FENCE = 2;   // marca de muro de divisa/jardim
@@ -440,6 +510,25 @@ function analisar(L, a) {
   return { cod: a.cod, ax, e0, e1, p0, p1, pc, W: e1 - e0, sill: a.sill, H: a.H, topo, ext, nOut, fl, rA, rB, L };
 }
 const ABR = { 1: D.ab['1'].map(a => analisar(1, a)), 2: D.ab['2'].map(a => analisar(2, a)) };
+/* frestas de até 15 cm entre o cômodo e a parede (piso e forro não encostavam na parede): a célula vazia que tem
+   cômodo de um lado e parede do lado oposto passa a ser do cômodo */
+(function fechaFrestas() {
+  for (const L of [1, 2]) {
+    const A = ROOM[L], T = new Float32Array(HT0[L]), add = [];
+    for (const o of ABR[L]) { const x0 = o.ax ? o.e0 : o.p0, x1 = o.ax ? o.e1 : o.p1, z0 = o.ax ? o.p0 : o.e0, z1 = o.ax ? o.p1 : o.e1;
+      for (let j = cj(z0 + 0.001); j <= cj(z1 - 0.001); j++) for (let i = ci(x0 + 0.001); i <= ci(x1 - 0.001); i++) T[j * NX + i] = 1; }
+    // anda até 3 células a partir do cômodo; se encontra parede ou outro cômodo, avança uma célula (3 passadas)
+    for (let pass = 0; pass < 3; pass++, add.forEach(([k, id]) => { A[k] = id; }), add.length = 0) for (let j = 4; j < NY - 4; j++) for (let i = 4; i < NX - 4; i++) {
+      const k = j * NX + i; if (A[k] || T[k] > 0) continue;
+      for (const d of [1, -1, NX, -NX]) {
+        if (!A[k - d]) continue; let ok = false;
+        for (let s = 1; s <= 3; s++) { const kk = k + d * s; if (T[kk] > 0 || (A[kk] && A[kk] !== A[k - d])) { ok = true; break; } if (A[kk]) break; }
+        if (ok) { add.push([k, A[k - d]]); break; }
+      }
+    }
+    for (const [k, id] of add) A[k] = id;
+  }
+})();
 
 /* ====== mesclagem de retângulos de uma grade de rótulos ====== */
 function mergeRects(arr, keyFn) {
@@ -476,13 +565,21 @@ function livreShutter(o) {
 }
 
 function abertura(o) {
-  const L = o.L, ax = o.ax, y0w = L === 1 ? 0 : 3.5;
+  const L = o.L, ax = o.ax, y0w = L === 1 ? 0 : 3.22;
   const kind = /^PC/.test(o.cod) ? 'slide' : /^VF/.test(o.cod) ? 'fixed' : /^P/.test(o.cod) ? 'door' : (o.sill < 0.05 ? 'slide' : 'window');
   const yS = o.fl + o.sill, yT = yS + o.H;
   const fw = 0.05;
   // peitoril e verga (como paredes, para colisão e acabamento)
   if (o.sill > 0.02) BOX[L].push(ax ? [o.e0, o.p0, o.e1, o.p1, y0w, yS, 0] : [o.p0, o.e0, o.p1, o.e1, y0w, yS, 0]);
-  if (o.topo - yT > 0.03) BOX[L].push(ax ? [o.e0, o.p0, o.e1, o.p1, yT, o.topo, 0] : [o.p0, o.e0, o.p1, o.e1, yT, o.topo, 0]);
+  if (o.topo - yT > 0.03) {
+    // verga até a parede de cima, em pedaços de 10 cm que param logo abaixo do telhado
+    const n = Math.max(1, Math.ceil(Math.round((o.e1 - o.e0) / G) / 2));
+    for (let k = 0; k < n; k++) {
+      const u0 = o.e0 + 2 * G * k, u1 = k === n - 1 ? o.e1 : o.e0 + 2 * G * (k + 1); let top = o.topo;
+      for (const u of [u0, u1]) for (const pp of [o.p0, o.p1]) { const t = ax ? telhaEm(u, pp, L === 1) : telhaEm(pp, u, L === 1); if (t === t) top = Math.min(top, t - 0.05); }
+      if (top - yT > 0.03) BOX[L].push(ax ? [u0, o.p0, u1, o.p1, yT, top, 0] : [o.p0, u0, o.p1, u1, yT, top, 0]);
+    }
+  }
   const P = MBs.paint, s = S('plaster');
   if (kind === 'fixed' && o.sill < 0.05) colX(L, ax, o.e0, o.p0, o.e1, o.p1);
   // soleira / piso da passagem
@@ -626,6 +723,7 @@ function pisosEForros(L) {
     const cf = cfgOf(L, id); if (!cf) continue;
     const y = floorY(L, id);
     if (cf.f) { const mb = MBs[FB[cf.f]]; mb.flat(x0, z0, x1, z1, y, FCOL[cf.f], S(cf.f), true); }
+    if (cf.f && y > BASE[L] + 0.01) MBs.stone.box(x0, BASE[L], z0, x1, y, z1, [0.93, 0.89, 0.82], S('stone'), 15);   // espelho do piso elevado (cozinha)
     if (cf.c) { const mb = cf.c === 'w' ? MBs.ceilW : MBs.ceilP; mb.flat(x0, z0, x1, z1, CEIL[L], cf.c === 'w' ? [1, 1, 1] : [1, 0.985, 0.95], cf.c === 'w' ? S('ceilW') : S('plaster'), false); }
   }
 }
@@ -719,48 +817,73 @@ function ball(mb, x, y, z, r, col, det, sx, sy, sz) { const g = new THREE.Icosah
 
 /* ====== telhado de telha cerâmica ====== */
 function telhado() {
-  const cell = 0.1, X0 = -0.15, Z0 = -0.15, nxs = Math.ceil(19.1 / cell), nzs = Math.ceil(30.3 / cell), NN = (nxs + 1) * (nzs + 1);
-  const gi = { fundos: 0, casa: 1, garagem: 2 }; const names = ['fundos', 'casa', 'garagem'];
-  const polys = D.roof.map(r => ({ g: gi[r.g], v: r.v }));
-  const gcell = new Int8Array(nxs * nzs).fill(-1);
-  for (let iz = 0; iz < nzs; iz++) for (let ix = 0; ix < nxs; ix++) {
-    const x = X0 + (ix + 0.5) * cell, z = Z0 + (iz + 0.5) * cell;
-    if (x > 1.68 && x < 5.43 && z > 12.28 && z < 14.83) continue;
-    for (const p of polys) if (pontoEmPoligono(x, z, p.v)) { gcell[iz * nxs + ix] = p.g; break; }
-  }
-  const NH = [null, null, null];
-  const nodeH = g => {
-    if (NH[g]) return NH[g]; const bd = D.bd[names[g]], ev = D.eave[names[g]], a = new Float32Array(NN);
-    for (let iz = 0; iz <= nzs; iz++) for (let ix = 0; ix <= nxs; ix++) {
-      const x = X0 + ix * cell, z = Z0 + iz * cell; let m = 1e9; for (let k = 0; k < bd.length; k++) { const dx = bd[k][0] - x, dz = bd[k][1] - z, d2 = dx * dx + dz * dz; if (d2 < m) m = d2; }
-      a[iz * (nxs + 1) + ix] = ev + 0.35 * Math.sqrt(m) + 0.02;
+  const mb = new MB(), under = new MB(), sr = S('roof'), sw = S('ceilW'), P = MBs.paint, sp = S('plaster');
+  const K = p => p[0].toFixed(2) + ',' + p[1].toFixed(2);
+  // altura de cada vértice = média das águas que o compartilham (arestas sem degrau entre águas vizinhas)
+  const acc = {};
+  for (const a of AGUAS) for (const p of a.v) (acc[K(p)] = acc[K(p)] || []).push(a.h(p[0], p[1]));
+  const HV = p => { const l = acc[K(p)]; return l.reduce((s, v) => s + v, 0) / l.length; };
+  // arestas: quantas águas usam cada uma (1 = borda livre, 2 = espigão, cumeeira ou rincão)
+  const EK = (p, q) => { const a = K(p), b = K(q); return a < b ? a + '|' + b : b + '|' + a; };
+  const uso = {};
+  for (const a of AGUAS) for (let i = 0; i < a.v.length; i++) { const k = EK(a.v[i], a.v[(i + 1) % a.v.length]); (uso[k] = uso[k] || []).push(a); }
+  const rr = rnd(5), rufo = [0.97, 0.93, 0.84];
+  for (const a of AGUAS) {
+    const pts = a.v.map(p => new THREE.Vector2(p[0], p[1]));
+    let tris; try { tris = THREE.ShapeUtils.triangulateShape(pts, []); } catch (e) { continue; }
+    const nl = Math.hypot(INC, 1), n = [-INC * a.nx / nl, 1 / nl, -INC * a.nz / nl], kk = Math.hypot(1, INC);
+    const t = 0.94 + rr() * 0.08, col = [t, t * 0.97, t * 0.95];
+    const uv = (x, z) => [((x - a.p[0]) * a.ux + (z - a.p[1]) * a.uz) * sr, ((x - a.p[0]) * a.nx + (z - a.p[1]) * a.nz) * kk * sr];
+    const b0 = mb.v, b1 = under.v;
+    for (const p of a.v) {
+      const h = HV(p);
+      mb.vert([p[0], h, p[1]], n, uv(p[0], p[1]), col);
+      under.vert([p[0], h - ESP_T, p[1]], [-n[0], -n[1], -n[2]], [p[0] * sw, p[1] * sw], [1, 1, 1]);
     }
-    return NH[g] = a;
-  };
-  const mb = new MB(), under = new MB(); const vid = [new Int32Array(NN).fill(-1), new Int32Array(NN).fill(-1), new Int32Array(NN).fill(-1)];
-  const sr = S('roof'); const rr = rnd(5);
-  const V = (g, ix, iz) => {
-    const k = iz * (nxs + 1) + ix; if (vid[g][k] >= 0) return vid[g][k];
-    const H = nodeH(g), x = X0 + ix * cell, z = Z0 + iz * cell, h = H[k];
-    const hx1 = H[k + (ix < nxs ? 1 : 0)], hx0 = H[k - (ix > 0 ? 1 : 0)], hz1 = H[k + (iz < nzs ? nxs + 1 : 0)], hz0 = H[k - (iz > 0 ? nxs + 1 : 0)];
-    let nx = -(hx1 - hx0) / (2 * cell), nz = -(hz1 - hz0) / (2 * cell), l = Math.hypot(nx, 1, nz); nx /= l; nz /= l;
-    const t = 0.92 + rr() * 0.12;
-    return vid[g][k] = mb.vert([x, h, z], [nx, 1 / l, nz], [x * sr, z * sr], [t, t * 0.97, t * 0.95]);
-  };
-  for (let iz = 0; iz < nzs; iz++) for (let ix = 0; ix < nxs; ix++) {
-    const g = gcell[iz * nxs + ix]; if (g < 0) continue;
-    const a = V(g, ix, iz), b = V(g, ix + 1, iz), c = V(g, ix + 1, iz + 1), d = V(g, ix, iz + 1);
-    mb.i.push(d, c, b, d, b, a);
-    const cx0 = X0 + (ix + 0.5) * cell, cz0 = Z0 + (iz + 0.5) * cell;
-    if (roomAt(1, cx0, cz0) === 0 && roomAt(2, cx0, cz0) === 0) {
-      const H = nodeH(g), k = iz * (nxs + 1) + ix, dn = 0.15, x = X0 + ix * cell, z = Z0 + iz * cell, sw = S('ceilW');
-      under.quad([[x, H[k] - dn, z], [x + cell, H[k + 1] - dn, z], [x + cell, H[k + nxs + 2] - dn, z + cell], [x, H[k + nxs + 1] - dn, z + cell]], [[x * sw, z * sw], [(x + cell) * sw, z * sw], [(x + cell) * sw, (z + cell) * sw], [x * sw, (z + cell) * sw]], [1, 1, 1]);
+    for (const tr of tris) {
+      const A = a.v[tr[0]], B = a.v[tr[1]], Cc = a.v[tr[2]];
+      const ar = (B[0] - A[0]) * (Cc[1] - A[1]) - (Cc[0] - A[0]) * (B[1] - A[1]);   // < 0: anti-horário visto de cima
+      if (ar < 0) { mb.i.push(b0 + tr[0], b0 + tr[1], b0 + tr[2]); under.i.push(b1 + tr[0], b1 + tr[2], b1 + tr[1]); }
+      else { mb.i.push(b0 + tr[0], b0 + tr[2], b0 + tr[1]); under.i.push(b1 + tr[0], b1 + tr[1], b1 + tr[2]); }
+    }
+    // bordas: testeira no beiral e nas bordas livres; capa de telha nos espigões e cumeeiras
+    for (let i = 0; i < a.v.length; i++) {
+      const p = a.v[i], q = a.v[(i + 1) % a.v.length], hp = HV(p), hq = HV(q), ls = uso[EK(p, q)];
+      const mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+      const out = [mid[0] - (a.v.reduce((s, v) => s + v[0], 0) / a.v.length), 0, mid[1] - (a.v.reduce((s, v) => s + v[1], 0) / a.v.length)];
+      if (ls.length === 1) {
+        quadOut(P, [[p[0], hp - ESP_T - 0.04, p[1]], [q[0], hq - ESP_T - 0.04, q[1]], [q[0], hq + 0.03, q[1]], [p[0], hp + 0.03, p[1]]], [[0, 0], [1, 0], [1, 1], [0, 1]], rufo, out);
+        quadOut(P, [[p[0], hp - ESP_T - 0.04, p[1]], [q[0], hq - ESP_T - 0.04, q[1]], [q[0], hq + 0.03, q[1]], [p[0], hp + 0.03, p[1]]], [[0, 0], [1, 0], [1, 1], [0, 1]], rufo, [-out[0], 0, -out[2]]);
+      } else if (a === ls[0]) {
+        // só cobre espigão/cumeeira (as duas águas descem a partir da aresta); rincão fica sem capa
+        const o = ls[1], ex = q[0] - p[0], ez = q[1] - p[1], el = Math.hypot(ex, ez) || 1;
+        let dx = -ez / el, dz = ex / el; const c0 = a.v.reduce((s, v) => [s[0] + v[0] / a.v.length, s[1] + v[1] / a.v.length], [0, 0]);
+        if ((c0[0] - mid[0]) * dx + (c0[1] - mid[1]) * dz < 0) { dx = -dx; dz = -dz; }
+        const da = a.nx * dx + a.nz * dz, db = -(o.nx * dx + o.nz * dz);
+        if (da < 0.05 && db < 0.05) {
+          // a capa para 15 cm antes do beiral, para não sobrar uma ponta redonda na quina
+          const A3 = new THREE.Vector3(p[0], hp, p[1]), B3 = new THREE.Vector3(q[0], hq, q[1]), dir = B3.clone().sub(A3).normalize();
+          if (Math.abs(hp - a.e) < 0.05) A3.addScaledVector(dir, 0.15); if (Math.abs(hq - a.e) < 0.05) B3.addScaledVector(dir, -0.15);
+          const len3 = A3.distanceTo(B3), g = new THREE.CylinderGeometry(0.09, 0.09, len3, 8, 1);
+          const qt = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir), cen = A3.clone().add(B3).multiplyScalar(0.5);
+          const M = new THREE.Matrix4().compose(new THREE.Vector3(cen.x, cen.y + 0.02, cen.z), qt, new THREE.Vector3(1, 1, 0.75));
+          mb.geo(g, M, [0.82, 0.8, 0.78]); g.dispose();
+        }
+      }
+    }
+  }
+  // degrau entre as duas meias-águas dos fundos (x 5,63): fecha em reboco
+  {
+    const A = AGUAS.find(a => a.nome === 'fundos' && a.x1 > 18), B = AGUAS.find(a => a.nome === 'fundos' && a.x1 < 6);
+    if (A && B) for (const [z0, z1] of [[-0.02, 4.48]]) {
+      const x = 5.63;
+      quadOut(P, [[x, A.h(x, z0), z0], [x, A.h(x, z1), z1], [x, B.h(x, z1) + 0.03, z1], [x, B.h(x, z0) + 0.03, z0]], [[z0 * sp, 0], [z1 * sp, 0], [z1 * sp, 1], [z0 * sp, 1]], [0.95, 0.9, 0.8], [1, 0, 0]);
     }
   }
   const grp = new THREE.Group();
-  const m1 = mb.build(MAT.roof, true, true); grp.add(m1);
-  if (under.v) grp.add(under.build(MAT.ceilW, true, true));
-  return { grp, nodeH, gcell, nxs, nzs, X0, Z0, cell };
+  grp.add(mb.build(MAT.roof, true, true));
+  grp.add(under.build(MAT.ceilW, false, true));
+  return { grp };
 }
 
 /* ====== escada em U (degraus de 17,5 cm) ====== */
@@ -788,10 +911,11 @@ function detalhes() {
   const BAYS = { 1: { segs: [[[1.40, 23.52], [4.55, 23.52]], [[4.55, 23.52], [5.79, 21.33]]], sill: 0.45, H: 1.95, f: 0.35, top: 3.25 },
                  2: { segs: [[[1.40, 23.52], [4.28, 23.52]], [[4.28, 23.52], [5.53, 21.33]]], sill: 0.90, H: 1.50, f: 3.50, top: 6.10 } };
   for (const L of [1, 2]) {
-    const B = BAYS[L]; const y0 = L === 1 ? 0 : 3.5;
+    const B = BAYS[L]; const y0 = L === 1 ? 0 : 3.22;
     for (const [p, q] of B.segs) {
       obox(P, p, q, 0.22, y0, B.f + B.sill, cream, sp);
       obox(P, p, q, 0.22, B.f + B.sill + B.H, B.top + 0.05, cream, sp);
+      obox(P, p, q, 0.5, CEIL[L] - 0.08, B.top + 0.05, cream, sp);   // sanca sobre o vidro: esconde o serrilhado do forro
       obox(P, p, q, 0.07, B.f + B.sill, B.f + B.sill + 0.05, WHITE, sp);
       obox(P, p, q, 0.07, B.f + B.sill + B.H - 0.05, B.f + B.sill + B.H, WHITE, sp);
       const len = Math.hypot(q[0] - p[0], q[1] - p[1]), nm = Math.max(2, Math.round(len / 0.95));
@@ -856,16 +980,17 @@ function detalhes() {
     g.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); g.rotation.y = -Math.atan2(z1 - z0, x1 - x0); g.castShadow = true; g.receiveShadow = true; return g;
   };
   const latG = new THREE.Group();
-  latG.add(lat(2.35, 14.70, 5.05, 14.70, 0.35, 2.75)); latG.add(lat(5.525, 12.35, 5.525, 14.65, 0.35, 2.75)); latG.add(lat(14.9, 4.36, 18.2, 4.36, 0.05, 1.85));
+  latG.add(lat(2.35, 14.70, 5.05, 14.70, 0.35, 2.75)); latG.add(lat(5.525, 12.35, 5.525, 14.65, 0.35, 2.75)); latG.add(lat(16.5, 4.36, 18.2, 4.36, 0.05, 1.85));
   const frameLat = (x0, z0, x1, z1, y0, y1) => { obox(P, [x0, z0], [x1, z1], 0.07, y0 - 0.0, y0 + 0.06, WOODD, 1); obox(P, [x0, z0], [x1, z1], 0.07, y1 - 0.06, y1, WOODD, 1); };
-  frameLat(2.35, 14.70, 5.05, 14.70, 0.35, 2.75); frameLat(5.525, 12.35, 5.525, 14.65, 0.35, 2.75); frameLat(14.9, 4.36, 18.2, 4.36, 0.05, 1.85);
+  frameLat(2.35, 14.70, 5.05, 14.70, 0.35, 2.75); frameLat(5.525, 12.35, 5.525, 14.65, 0.35, 2.75); frameLat(16.5, 4.36, 18.2, 4.36, 0.05, 1.85);
   // cabeceiras de reboco sobre os muxarabis
   obox(P, [2.35, 14.70], [5.05, 14.70], 0.18, 2.75, 3.25, cream, sp); obox(P, [5.525, 12.35], [5.525, 14.65], 0.18, 2.75, 3.25, cream, sp);
-  COLX[1].push([2.35, 14.6, 5.05, 14.8], [5.45, 12.35, 5.6, 14.65], [14.9, 4.25, 18.2, 4.47]);
+  COLX[1].push([2.35, 14.6, 5.05, 14.8], [5.45, 12.35, 5.6, 14.65], [16.5, 4.25, 18.2, 4.47]);
   // pergolado: vigas de madeira (x 5,65–8,0, z 3,9–5,9)
   {
     let x0 = 99, x1 = -99, z0 = 99, z1 = -99; const id = RN[1].indexOf('Pergolado') + 1;
     for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) if (ROOM[1][j * NX + i] === id) { const x = cx_(i), z = cz_(j); x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+    z0 = Math.max(z0, 4.6);   // começa depois do beiral da meia-água dos fundos
     if (x0 < 90) {
       for (let z = z0; z <= z1; z += 0.42) P.box(x0 - 0.05, 3.02, z - 0.04, x1 + 0.05, 3.2, z + 0.04, WOODD, 1, 63);
       for (const x of [x0, x1]) P.box(x - 0.06, 3.2, z0 - 0.1, x + 0.06, 3.3, z1 + 0.1, WOODD, 1, 63);
@@ -928,7 +1053,7 @@ function terreno() {
   COLX[1].push([0.7, 23.85, 4.05, 25.85]);
   // trilha de pedra do portão até a entrada
   {
-    const pts = []; const N = 14; const P0 = [5.6, 30.0], P1 = [5.3, 27.4], P2 = [7.5, 26.2], P3 = [7.75, 24.25];
+    const pts = []; const N = 14; const P0 = [5.6, 30.0], P1 = [5.3, 27.4], P2 = [7.5, 26.0], P3 = [7.75, 23.15];
     const bez = t => { const u = 1 - t; return [u * u * u * P0[0] + 3 * u * u * t * P1[0] + 3 * u * t * t * P2[0] + t * t * t * P3[0], u * u * u * P0[1] + 3 * u * u * t * P1[1] + 3 * u * t * t * P2[1] + t * t * t * P3[1]]; };
     const L_ = [], R_ = []; for (let k = 0; k <= N; k++) { const t = k / N, p = bez(t), q = bez(Math.min(1, t + 0.01)), q0 = bez(Math.max(0, t - 0.01)); const dx = q[0] - q0[0], dz = q[1] - q0[1], l = Math.hypot(dx, dz) || 1; const w = 0.85 - 0.0 * t; L_.push([p[0] - dz / l * w, p[1] + dx / l * w]); R_.push([p[0] + dz / l * w, p[1] - dx / l * w]); }
     for (let k = 0; k < N; k++) MBs.stone.poly([L_[k], L_[k + 1], R_[k + 1], R_[k]], [], 0.012, [1, 0.98, 0.95], S('stone'), true);
@@ -994,18 +1119,18 @@ function vaso(x, y, z, s, planta) {
 function jardins() {
   const flor = { rosa: [0.95, 0.5, 0.6], laranja: [0.97, 0.62, 0.2], branca: [0.98, 0.96, 0.92], roxa: [0.62, 0.45, 0.8] };
   // jardim da frente
-  arvore(2.2, 27.9, 1.1, 'manaca'); arvore(13.0, 28.4, 0.85, 'verde'); arvore(9.0, 28.6, 0.6, 'frut');
+  arvore(2.2, 27.9, 0.8, 'manaca'); arvore(12.3, 28.4, 0.85, 'verde'); arvore(9.0, 28.6, 0.6, 'frut');
   for (let x = 0.7; x < 4.2; x += 1.15) arbusto(x, 29.45, 0.9, null, flor.rosa);
   for (let x = 7.3; x < 13.8; x += 1.2) arbusto(x, 29.5, 0.85, null, x % 2 < 1 ? flor.laranja : flor.branca);
   for (let z = 26.5; z < 29; z += 1.4) arbusto(0.5, z, 0.7, [0.3, 0.5, 0.3], flor.roxa);
-  arbusto(4.2, 25.0, 0.9, null, flor.branca); arbusto(9.6, 24.8, 0.9, null, flor.rosa); arbusto(12.3, 25.2, 0.8, null, flor.laranja);
+  arbusto(4.2, 25.0, 0.9, null, flor.branca); arbusto(12.3, 25.2, 0.8, null, flor.laranja);
   cyl(MBs.stone, 10.7, 0, 0.05, 28.1, 0.8, 0.8, [0.7, 0.68, 0.64], 20);   // tampa da cisterna
   // lateral e fundo do jardim
-  arvore(10.6, 9.0, 0.8, 'frut'); arvore(12.4, 15.2, 0.9, 'verde'); arvore(9.6, 5.9, 0.75, 'manaca');
-  arvore(18.1, 15.2, 0.75, 'palma'); arvore(14.5, 16.0, 0.65, 'palma'); arvore(18.1, 5.6, 0.7, 'palma'); arvore(8.4, 17.1, 0.001, 'palma', false);
-  for (let z = 5.2; z < 17; z += 1.15) arbusto(18.45, z, 0.8, null, z % 2 < 1 ? flor.rosa : flor.branca);
-  for (let x = 9; x < 14.2; x += 1.2) arbusto(x, 4.65, 0.6, null, flor.laranja);
-  for (let z = 6.5; z < 16; z += 2.4) { vaso(8.4, 0.05, z, 1, null); }
+  // jardim da piscina: só duas palmeiras junto ao muro, para o gramado ficar livre
+  arvore(18.1, 15.2, 0.75, 'palma'); arvore(18.1, 5.6, 0.7, 'palma');
+  for (let z = 6.4; z < 17; z += 2.3) arbusto(18.45, z, 0.8, null, z % 4.6 < 2.3 ? flor.rosa : flor.branca);
+  for (const x of [9.4, 11.6, 13.8]) arbusto(x, 4.65, 0.6, null, flor.laranja);
+  for (const z of [7.7, 12.5]) vaso(8.4, 0.05, z, 1, null);
   // jardim interno (pátio com jabuticabeira)
   arvore(3.55, 13.5, 0.95, 'frut', true);
   for (const [x, z] of [[2.0, 12.6], [5.1, 12.6], [2.0, 14.35], [5.1, 14.35], [3.0, 12.55], [4.3, 12.55]]) arbusto(x, z, 0.5, null, flor.branca, 0.35);
@@ -1022,7 +1147,6 @@ function jardins() {
   // vasos na varanda e nas sacadas
   for (const [x, z] of [[6.0, 16.6], [7.8, 16.6], [6.0, 6.4]]) vaso(x, 0.35, z, 0.8, null);
   vaso(8.1, 3.5, 22.8, 0.9, null); vaso(9.6, 3.5, 22.8, 0.9, null); vaso(10.5, 3.5, 16.3, 0.8, 'cacto');
-  vaso(5.9, 0.35, 22.7, 1, null); vaso(9.6, 0.35, 22.7, 1, null);
 }
 
 'use strict';
@@ -1058,7 +1182,7 @@ const P_ = {
   tv(L, x, y, z, r) { F(x, y + 1.0, z, r, m => { bx(m, 0, 0, 0, 1.15, 0.66, 0.05, [0.07, 0.07, 0.08]); }); },
   quadro(L, x, y, z, r, w, h, col) { F(x, y, z, r, m => { bx(m, 0, 0, 0, w + 0.06, h + 0.06, 0.03, PAL.madE); bx(m, 0, 0.03, 0.02, w, h, 0.01, col); bx(m, -w * 0.15, 0.03 + h * 0.3, 0.03, w * 0.35, h * 0.35, 0.004, shade(col, 1.2)); bx(m, w * 0.2, 0.03 + h * 0.1, 0.03, w * 0.3, h * 0.25, 0.004, shade(col, 0.7)); }); },
   tapete(x, y, z, w, d, col) { MBs.rug.flat(x - w / 2, z - d / 2, x + w / 2, z + d / 2, y + 0.012, col || [1, 1, 1], 1 / 1.1, true); },
-  pendente(x, y, z, hh, col) { cil(FU, x, y + hh, y + hh + 0.8, z, 0.008, 0.008, PAL.preto, 4); G_(x, y + hh, z, 0, m => { const g = new THREE.SphereGeometry(0.17, 12, 8); m.geo(g, new THREE.Matrix4().makeTranslation(x, y + hh - 0.05, z), col || [1, 0.85, 0.55]); g.dispose(); }); luz(x, y + hh - 0.3, z, 0xffc98a, 0.55); },
+  pendente(x, y, z, hh, col) { cil(FU, x, y + hh, Math.min(y + hh + 0.8, (y < 2 ? CEIL[1] : CEIL[2]) - 0.01), z, 0.008, 0.008, PAL.preto, 4); G_(x, y + hh, z, 0, m => { const g = new THREE.SphereGeometry(0.17, 12, 8); m.geo(g, new THREE.Matrix4().makeTranslation(x, y + hh - 0.05, z), col || [1, 0.85, 0.55]); g.dispose(); }); luz(x, y + hh - 0.3, z, 0xffc98a, 0.55); },
   abajur(x, y, z) { cil(FU, x, y, y + 0.3, z, 0.07, 0.03, PAL.madE, 6); const g = new THREE.CylinderGeometry(0.12, 0.17, 0.22, 10); FG.geo(g, new THREE.Matrix4().makeTranslation(x, y + 0.42, z), [1, 0.82, 0.5]); g.dispose(); luz(x, y + 0.5, z, 0xffbf80, 0.45); },
   luminaria(L, x, y, z) { cil(FU, x, y, y + 1.55, z, 0.025, 0.025, PAL.preto, 6); cil(FU, x, y, y + 0.02, z, 0.16, 0.16, PAL.preto, 12); const g = new THREE.CylinderGeometry(0.16, 0.22, 0.3, 10); FG.geo(g, new THREE.Matrix4().makeTranslation(x, y + 1.7, z), [1, 0.82, 0.5]); g.dispose(); luz(x, y + 1.7, z, 0xffbf80, 0.5); },
   vasoP(x, y, z, s) { vaso(x, y, z, s || 0.8, null); },
@@ -1104,14 +1228,14 @@ function moveis() {
   P_.pendente(2.75, Z, 19.9, 2.6, [1, 0.85, 0.55]);
   // hall
   P_.tapete(7.75, Z, 19.1, 1.5, 3.2, [1, 0.9, 0.8]); P_.balcao(1, 9.75, Z, 19.9, 1, 1.4, 0.38, PAL.madE, PAL.mad); P_.quadro(1, 10.05, Z + 1.2, 19.9, 1, 0.8, 0.9, PAL.petroleo);
-  P_.pendente(7.75, Z, 19.1, 2.6, [1, 0.75, 0.45]); P_.vaso_s(10.0, Z, 18.0); P_.vaso_s(5.95, Z, 18.0);
+  P_.pendente(7.75, Z, 19.1, 2.6, [1, 0.75, 0.45]);
   // entrada
-  P_.banco(1, 6.45, Z, 21.65, 0, 1.1, 0.36, [0.8, 0.74, 0.62]); P_.tapete(7.75, Z, 21.65, 1.0, 0.6, [1, 0.8, 0.6]); luz(7.75, 2.9, 21.4, 0xffc98a, 0.7);
+  P_.banco(1, 8.85, Z, 21.33, 0, 0.9, 0.36, [0.8, 0.74, 0.62]); P_.tapete(7.75, Z, 21.65, 1.0, 0.6, [1, 0.8, 0.6]); luz(7.75, 2.9, 21.4, 0xffc98a, 0.7);
   { const g = new THREE.SphereGeometry(0.11, 8, 6); FG.geo(g, new THREE.Matrix4().makeTranslation(7.75, 2.75, 21.4), [1, 0.85, 0.55]); g.dispose(); }
   // cozinha
-  P_.balcao(1, 0.62, 0.525, 7.2, 3, 0.62, 2.9, PAL.salvia, PAL.madE); P_.balcao(1, 2.1, 0.525, 5.98, 0, 1.55, 0.62, PAL.salvia, PAL.madE); P_.fogao(1, 3.25, 0.525, 6.0, 0);
+  P_.balcao(1, 0.62, 0.525, 7.8, 3, 2.2, 0.62, PAL.salvia, PAL.madE); P_.balcao(1, 2.1, 0.525, 5.98, 0, 1.55, 0.62, PAL.salvia, PAL.madE); P_.fogao(1, 3.25, 0.525, 6.0, 0);
   P_.balcao(1, 4.2, 0.525, 5.98, 0, 0.7, 0.62, PAL.salvia, PAL.madE); P_.geladeira(1, 4.95, 0.525, 6.1, 0);
-  P_.aereo(1, 2.1, 0.525, 5.85, 0, 1.55); P_.aereo(1, 0.45, 0.525, 7.2, 3, 2.0); P_.aereo(1, 0.45, 0.525, 7.2, 3, 0.1);
+  P_.aereo(1, 2.1, 0.525, 5.85, 0, 1.55); P_.aereo(1, 0.45, 0.525, 7.8, 3, 2.0);
   P_.balcao(1, 2.9, 0.525, 7.55, 0, 2.0, 0.95, PAL.creme, PAL.mad);
   for (const dx of [-0.6, 0, 0.6]) { F(2.9 + dx, 0.525, 8.2, 0, m => { cil(m, 0, 0.6, 0.66, 0, 0.17, 0.17, PAL.terra, 10); cil(m, 0, 0, 0.6, 0, 0.025, 0.025, PAL.preto, 6); }); }
   P_.pendente(2.4, 0.525, 7.55, 2.1, [1, 0.8, 0.5]); P_.pendente(3.4, 0.525, 7.55, 2.1, [1, 0.8, 0.5]);
@@ -1122,7 +1246,7 @@ function moveis() {
   P_.balcao(1, 0.5, Z, 10.4, 3, 1.7, 0.42, PAL.madE, PAL.mad); P_.pendente(3.0, Z, 10.4, 2.4, [1, 0.85, 0.5]); P_.quadro(1, 0.28, Z + 1.3, 10.4, 3, 0.9, 0.6, PAL.mostarda);
   // lavanderia e despensa
   P_.maquina(1, 2.2, Z, 0.55, 0); P_.maquina(1, 2.9, Z, 0.55, 0); P_.balcao(1, 4.9, Z, 1.2, 1, 0.9, 0.5, PAL.creme, PAL.cinza);
-  P_.balcao(1, 4.9, Z, 2.2, 1, 0.5, 0.5, PAL.creme, PAL.cinza); P_.caixas(1, 4.8, Z, 3.0, 0, 3);
+  P_.balcao(1, 4.9, Z, 2.2, 1, 0.5, 0.5, PAL.creme, PAL.cinza); P_.caixas(1, 0.75, Z, 1.2, 0, 3);
   P_.estante(1, 2.45, Z, 5.0, 3, 1.1, 1.9); P_.estante(1, 3.35, Z, 5.35, 2, 1.1, 1.9); P_.estante(1, 4.3, Z, 4.6, 1, 1.0, 1.9);
   // jardim interno
   P_.banco(1, 3.5, Z, 14.45, 2, 1.4, 0.4, PAL.mad);
@@ -1132,7 +1256,7 @@ function moveis() {
   // área gourmet
   P_.balcao(1, 10.6, Z, 0.55, 0, 3.2, 0.62, PAL.terra, PAL.madE); P_.aereo(1, 10.6, Z, 0.45, 0, 3.0, PAL.creme); P_.geladeira(1, 9.0, Z, 0.55, 0);
   P_.mesa(1, 10.9, Z, 2.4, 0, 2.6, 1.0, 0.76, PAL.mad, true); for (const dx of [-0.8, 0, 0.8]) { P_.cadeira(1, 10.9 + dx, Z, 1.6, 0, PAL.terra); P_.cadeira(1, 10.9 + dx, Z, 3.2, 2, PAL.terra); }
-  P_.balcao(1, 6.05, Z, 3.0, 1, 0.55, 1.8, PAL.madE, PAL.mad); for (const dz of [-0.55, 0.55]) F(6.75, Z, 3.0 + dz, 0, m => { cil(m, 0, 0.62, 0.68, 0, 0.16, 0.16, PAL.mostarda, 10); cil(m, 0, 0, 0.62, 0, 0.025, 0.025, PAL.preto, 6); });
+  P_.balcao(1, 6.05, Z, 3.0, 3, 1.8, 0.55, PAL.madE, PAL.mad); for (const dz of [-0.55, 0.55]) F(6.75, Z, 3.0 + dz, 0, m => { cil(m, 0, 0.62, 0.68, 0, 0.16, 0.16, PAL.mostarda, 10); cil(m, 0, 0, 0.62, 0, 0.025, 0.025, PAL.preto, 6); });
   P_.pendente(10.9, Z, 2.4, 2.3, [1, 0.78, 0.45]); P_.pendente(9.9, Z, 2.4, 2.3, [1, 0.78, 0.45]); P_.pendente(11.9, Z, 2.4, 2.3, [1, 0.78, 0.45]);
   // ateliê
   P_.mesa(1, 16.6, Z, 0.9, 0, 2.2, 0.9, 0.76, PAL.mad, true); P_.cadeira(1, 16.6, Z, 1.7, 2, PAL.mostarda); P_.estante(1, 18.35, Z, 2.0, 1, 1.8, 2.1); P_.maquina(1, 18.2, Z, 3.15, 1);
@@ -1140,41 +1264,41 @@ function moveis() {
   P_.pendente(16.6, Z, 1.3, 2.4, [1, 0.8, 0.5]); P_.tapete(16.5, Z, 2.0, 2.2, 1.4, [0.95, 0.88, 0.78]);
   // varanda
   P_.tapete(6.85, Z, 11.4, 1.8, 2.6, [1, 0.9, 0.78]); P_.poltrona(1, 6.2, Z, 10.5, 3, PAL.mostarda); P_.poltrona(1, 6.2, Z, 12.3, 3, PAL.mostarda); P_.redonda(1, 6.95, Z, 11.4, 0.6, 0.45, PAL.madE);
-  P_.banco(1, 5.95, Z, 7.8, 3, 1.6, 0.4, PAL.mad); P_.rede(1, 7.2, Z, 14.5, 0); luz(6.8, 3.0, 11.4, 0xffc98a, 0.5); luz(6.8, 3.0, 8.0, 0xffc98a, 0.5); luz(6.8, 3.0, 14.8, 0xffc98a, 0.5);
+  P_.rede(1, 7.2, Z, 14.5, 0); luz(6.8, 3.0, 11.4, 0xffc98a, 0.5); luz(6.8, 3.0, 8.0, 0xffc98a, 0.5); luz(6.8, 3.0, 14.8, 0xffc98a, 0.5);
   // corredor do arco
-  P_.tapete(13.6, Z, 19.1, 5.4, 1.3, [0.9, 0.8, 0.7]); P_.banco(1, 11.0, Z, 17.65, 0, 1.8, 0.4, PAL.mad); P_.banco(1, 16.0, Z, 20.6, 2, 1.8, 0.4, PAL.mad); for (const x of [11.4, 13.6, 15.8]) { const g = new THREE.SphereGeometry(0.13, 8, 6); FG.geo(g, new THREE.Matrix4().makeTranslation(x, 2.95, 19.1), [1, 0.85, 0.55]); g.dispose(); luz(x, 2.8, 19.1, 0xffc98a, 0.5); }
+  P_.tapete(13.6, Z, 19.1, 5.4, 1.3, [0.9, 0.8, 0.7]); P_.banco(1, 10.65, Z, 19.9, 1, 1.4, 0.4, PAL.mad); for (const x of [11.4, 13.6, 15.8]) { const g = new THREE.SphereGeometry(0.13, 8, 6); FG.geo(g, new THREE.Matrix4().makeTranslation(x, 2.95, 19.1), [1, 0.85, 0.55]); g.dispose(); luz(x, 2.8, 19.1, 0xffc98a, 0.5); }
   // depósito
-  P_.estante(1, 18.45, 0.05, 19.1, 1, 2.3, 2.0); P_.caixas(1, 17.9, 0.05, 18.0, 0, 4);
+  P_.estante(1, 18.45, 0.05, 19.1, 1, 2.3, 2.0); P_.caixas(1, 17.85, 0.05, 20.55, 0, 4);
   // garagem
   carro(15.75, 27.2); moto(17.95, 25.3, PAL.terra); moto(17.95, 26.6, PAL.azul); P_.estante(1, 14.95, -0.0, 24.8, 3, 1.6, 2.0);
   // deck da piscina
-  P_.espreguicadeira(1, 14.7, 0.05, 7.2, 0); P_.espreguicadeira(1, 14.7, 0.05, 9.2, 0); P_.redonda(1, 14.1, 0.05, 8.2, 0.5, 0.5, PAL.mad); P_.guardasol(14.15, 0.05, 11.2);
+  P_.espreguicadeira(1, 12.95, 0.05, 10.2, 0); P_.espreguicadeira(1, 12.95, 0.05, 12.3, 0); P_.guardasol(13.0, 0.05, 13.75);
   P_.espreguicadeira(1, 18.0, 0.05, 8.3, 0);
   // ---------- SUPERIOR ----------
   // quarto de casal
   P_.tapete(3.9, Z2, 19.6, 3.2, 2.3, [1, 0.88, 0.8]); P_.cama(2, 3.9, Z2, 18.2, 0, 1.9, PAL.rosa); P_.criado(2, 2.65, Z2, 17.5, 0); P_.criado(2, 5.15, Z2, 17.5, 0);
   P_.abajur(2.65, Z2 + 0.5, 17.5); P_.abajur(5.15, Z2 + 0.5, 17.5); P_.banco(2, 3.9, Z2, 20.35, 0, 1.5, 0.4, PAL.linho); P_.armario(2, 7.55, Z2, 19.2, 1, 1.8, 2.2, PAL.mad);
   P_.quadro(1, 3.9, Z2 + 1.4, 17.22, 0, 1.0, 0.7, PAL.terra);
-  P_.poltrona(2, 3.0, Z2, 22.6, 0, PAL.petroleo); P_.poltrona(2, 4.4, Z2, 22.2, 0, PAL.mostarda); P_.redonda(2, 3.7, Z2, 22.8, 0.5, 0.45, PAL.madE); P_.luminaria(1, 5.2, Z2, 22.6);
+  P_.poltrona(2, 3.27, Z2, 22.9, 0, PAL.petroleo); P_.poltrona(2, 4.12, Z2, 22.6, 0, PAL.mostarda); P_.luminaria(1, 3.0, Z2, 22.1);
   // closet
-  P_.armario(2, 1.95, Z2, 21.45, 0, 1.6, 2.2, PAL.mad); P_.armario(2, 0.55, Z2, 22.4, 3, 1.4, 2.2, PAL.mad); P_.tapete(1.6, Z2, 22.5, 1.2, 1.4, [1, 0.9, 0.8]);
+  P_.armario(2, 2.38, Z2, 22.15, 1, 1.6, 2.2, PAL.mad); P_.tapete(1.6, Z2, 22.5, 1.2, 1.4, [1, 0.9, 0.8]);
   // banheiro da suíte
   P_.pia(2, 8.95, Z2, 17.5, 0, 1.4); P_.bacia(2, 9.65, Z2, 19.1, 1); P_.box(2, 9.1, Z2, 20.35, 0, 1.0, 1.0);
   // hóspedes
-  P_.cama(2, 1.45, Z2, 6.9, 3, 1.4, PAL.salvia); P_.criado(2, 0.5, Z2, 7.9, 3); P_.armario(2, 2.9, Z2, 6.0, 0, 1.6, 2.2, PAL.mad); P_.poltrona(2, 3.4, Z2, 7.5, 1, PAL.mostarda); P_.tapete(2.0, Z2, 7.3, 2.0, 1.6, [0.95, 0.9, 0.8]);
+  P_.cama(2, 1.45, Z2, 6.9, 3, 1.4, PAL.salvia); P_.criado(2, 0.5, Z2, 7.9, 3); P_.armario(2, 2.9, Z2, 6.0, 0, 1.6, 2.2, PAL.mad); P_.tapete(2.0, Z2, 7.3, 2.0, 1.6, [0.95, 0.9, 0.8]);
   P_.abajur(0.5, Z2 + 0.5, 7.9);
   // banheiro do quarto
   P_.bacia(2, 5.2, Z2, 6.6, 1); P_.pia(2, 4.75, Z2, 6.0, 0, 0.6); P_.box(2, 4.8, Z2, 8.1, 0, 0.9, 0.9);
   // bagunça
-  P_.caixas(2, 5.0, Z2, 9.6, 0, 5); P_.caixas(2, 4.4, Z2, 10.5, 0, 4); P_.estante(2, 3.4, Z2, 9.2, 0, 1.4, 2.0); F(3.0, Z2, 10.5, 0, m => { bx(m, 0, 0, 0, 0.9, 0.5, 0.5, PAL.madE); bx(m, 0, 0.5, 0, 0.92, 0.1, 0.52, PAL.terra); }); solid(2, 3.0, 10.5, 0.9, 0.5, 0);
+  P_.caixas(2, 4.95, Z2, 9.5, 0, 5); P_.caixas(2, 4.95, Z2, 10.6, 0, 4); P_.estante(2, 3.3, Z2, 9.2, 0, 1.4, 2.0);
   // sala de computadores
   for (let k = 0; k < 5; k++) { const z = 6.6 + k * 2.05; P_.mesa(2, 7.45, Z2, z, 1, 1.5, 0.7, 0.75, PAL.madE, true); P_.monitor(2, 7.55, Z2 + 0.78, z, 1); P_.monitor(2, 7.55, Z2 + 0.78, z - 0.55 + 0.0, 1); F(7.55, Z2 + 0.76, z + 0.5, 1, m => { bx(m, 0, 0, 0, 0.4, 0.18, 0.4, PAL.preto); }); P_.cadeira(2, 6.8, Z2, z, 3, PAL.petroleo); }
   P_.sofa(2, 6.1, Z2, 16.0, 3, 1.8, PAL.mostarda); P_.tapete(6.5, Z2, 15.6, 1.3, 2.0, [0.9, 0.85, 0.75]); P_.luminaria(1, 6.1, Z2, 14.3);
-  { FG.setT(7.78, Z2 + 0.72, 6.3, 0); bx(FG, 0, 0, 0, 0.02, 0.02, 9.2, [0.5, 0.35, 1]); FG.clearT(); }
+  { FG.setT(7.78, Z2 + 0.72, 10.7, 0); bx(FG, 0, 0, 0, 0.02, 0.02, 9.4, [0.5, 0.35, 1]); FG.clearT(); }
   // corredor
-  P_.tapete(1.2, Z2, 14.6, 1.0, 3.2, [0.95, 0.85, 0.75]); P_.balcao(2, 0.45, Z2, 12.2, 3, 0.4, 1.2, PAL.madE, PAL.mad); P_.vaso_s(0.45, Z2 + 0.9, 12.2);
+  P_.tapete(1.2, Z2, 14.6, 1.0, 3.2, [0.95, 0.85, 0.75]); 
   // terraço, sacada e jardim superior
-  P_.redonda(2, 9.6, Z2, 16.15, 0.7, 0.72, PAL.madE); P_.cadeira(2, 9.0, Z2, 16.15, 3, PAL.salvia); P_.cadeira(2, 10.2, Z2, 16.15, 1, PAL.salvia);
+  P_.redonda(2, 10.55, Z2, 15.95, 0.6, 0.72, PAL.madE); P_.cadeira(2, 10.0, Z2, 15.95, 3, PAL.salvia); P_.cadeira(2, 10.55, Z2, 16.5, 2, PAL.salvia);
   P_.poltrona(2, 8.6, Z2, 22.7, 0, PAL.terra); P_.redonda(2, 9.4, Z2, 22.8, 0.45, 0.5, PAL.mad);
   P_.espreguicadeira(2, 13.9, Z2, 19.0, 0); P_.espreguicadeira(2, 15.5, Z2, 19.0, 0); P_.redonda(2, 14.7, Z2, 20.3, 0.5, 0.5, PAL.mad);
 }
@@ -1218,6 +1342,14 @@ function montarGrades() {
     else if (z >= 16.05 && z <= 16.95 && x >= 2.30 && x < 4.54) { H1[k] = NaN; H2[k] = 1.925 + 0.175 * Math.ceil((4.54 - x) / d); }
   }
   for (const r of D.slab2) { const [x0, z0, x1, z1] = r; for (let j = cj(z0 + 0.001); j <= cj(z1 - 0.001); j++) for (let i = ci(x0 + 0.001); i <= ci(x1 - 0.001); i++) { const k = j * NX + i; if (!(H2[k] > 0)) H2[k] = 3.5; } }
+  // soleiras das portas do superior (o vão da parede não tem laje na extração)
+  for (const o of ABR[2]) if (o.sill < 0.05) fillCells(H2, o.ax ? o.e0 : o.p0 - 0.1, o.ax ? o.p0 - 0.1 : o.e0, o.ax ? o.e1 : o.p1 + 0.1, o.ax ? o.p1 + 0.1 : o.e1, o.fl);
+  // frestas de uma célula entre a laje e as paredes (vizinhos opostos com piso)
+  for (let pass = 0; pass < 2; pass++) for (let j = 1; j < NY - 1; j++) for (let i = 1; i < NX - 1; i++) {
+    const k = j * NX + i; if (H2[k] === H2[k]) continue;
+    const a = H2[k - 1], b = H2[k + 1], c = H2[k - NX], d = H2[k + NX];
+    if ((a === 3.5 && b === 3.5) || (c === 3.5 && d === 3.5)) H2[k] = 3.5;
+  }
   // vazio do jardim interno: sem laje
   fillCells(H2, 1.60, 12.10, 5.40, 14.85, NaN);
   // corredor: chegada da escada

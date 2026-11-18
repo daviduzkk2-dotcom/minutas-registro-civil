@@ -791,6 +791,113 @@
   $('#btnWord').addEventListener('click', () => {
     baixarWord().catch(() => alert('Não foi possível gerar o arquivo do Word. Tente de novo ou baixe o PDF.'));
   });
+  // ---------- E-Protocolo: botão "copiar" + favorito que preenche a página deles ----------
+  // O site não fala com o E-Protocolo: copia os dados para a área de transferência (marcador MINUTAS-EPROTOCOLO:)
+  // e o favorito, rodando dentro da página do E-Protocolo, lê a área de transferência e preenche o formulário.
+  // Esta função vira o texto do favorito (javascript:...): não pode usar nada de fora dela.
+  async function preencherEProtocolo(dadosRecebidos) {
+    const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+    const semAc = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    const aviso = (txt, ruim) => {
+      const d = document.createElement('div');
+      d.textContent = txt + ' (favorito v20261118e)';
+      d.style.cssText = 'position:fixed;z-index:2147483647;top:16px;right:16px;max-width:420px;padding:12px 16px;border-radius:8px;font:14px/1.4 system-ui,sans-serif;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.3);background:' + (ruim ? '#a32020' : '#22313f');
+      document.body.appendChild(d);
+      setTimeout(() => d.remove(), 14000);
+    };
+    if (!/protocolo\.registrocivil\.org\.br/.test(location.hostname)) { alert('Este favorito é para a página do E-Protocolo (protocolo.registrocivil.org.br), em "Novo protocolo".'); return; }
+    let dados = dadosRecebidos;
+    if (!dados) {
+      let texto = '';
+      try { texto = await navigator.clipboard.readText(); } catch (e) { texto = prompt('Não consegui ler a área de transferência. Cole aqui o que o site de minutas copiou:') || ''; }
+      const i = texto.indexOf('MINUTAS-EPROTOCOLO:');
+      if (i < 0) { aviso('Não achei dados do site de minutas. Volte ao site, preencha a declaração e clique em "Copiar para o E-Protocolo".', true); return; }
+      try { dados = JSON.parse(texto.slice(i + 19)); } catch (e) { aviso('Os dados copiados estão incompletos. Copie de novo no site de minutas.', true); return; }
+    }
+    for (let t = 0; t < 40 && !document.getElementById('name'); t++) await esperar(500); // a página do E-Protocolo demora a carregar
+    if (!document.getElementById('name')) { aviso('Abra "Novo protocolo" no E-Protocolo e clique no favorito de novo.', true); return; }
+    const falhas = [];
+    const setVal = (el, v) => {
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const porId = (id) => document.getElementById(id);
+    async function escolher(i, casa, busca) {
+      const c = document.querySelectorAll('.searchable-select')[i];
+      if (!c) return false;
+      if (!c.classList.contains('select-active')) { (c.querySelector('input') || c).click(); await esperar(250); }
+      const campo = [...c.querySelectorAll('input')].pop();
+      if (campo) { setVal(campo, busca || ''); await esperar(300); }
+      for (let t = 0; t < 40; t++) {
+        const li = [...c.querySelectorAll('li.select-option')].find((l) => casa(l.textContent.trim()));
+        if (li) { (li.querySelector('label') || li).click(); await esperar(400); if (c.classList.contains('select-active')) document.body.click(); return true; }
+        await esperar(150);
+      }
+      if (c.classList.contains('select-active')) document.body.click();
+      return false;
+    }
+    if (dados.nome) setVal(porId('name'), dados.nome);
+    if (dados.cpf) setVal(porId('cpf'), dados.cpf);
+    setVal(porId('phone'), dados.telefone || '+55(12)99718-6218');
+    setVal(porId('email'), dados.email || 'naopossui@gmail.com');
+    if (!(await escolher(0, (t) => t.toUpperCase() === dados.uf, dados.uf))) falhas.push('estado');
+    if (!(await escolher(1, (t) => semAc(t) === semAc(dados.cidade), dados.cidade))) falhas.push('cidade');
+    if (!(await escolher(2, (t) => t.startsWith(dados.cns)))) falhas.push('cartório (CNS ' + dados.cns + ')');
+    await esperar(500);
+    // Cada lista só libera depois da anterior (e as opções chegam do servidor): espera até ~12 s.
+    // Os códigos mudam conforme o tipo de registro (ex.: "Certidão" é 8 em Nascimento e 9 em Casamento): escolhe pelo NOME.
+    const sel = async (id, nomeOpcao, nome) => {
+      for (let t = 0; t < 80; t++) {
+        const e = porId(id);
+        const o = e && !e.disabled ? [...e.options].find((x) => x.value && semAc(x.text) === semAc(nomeOpcao)) : null;
+        if (o) {
+          setVal(e, o.value); await esperar(500);
+          if (e.value === o.value) return;
+        }
+        await esperar(150);
+      }
+      falhas.push(nome);
+    };
+    await sel('record_type', dados.tipo, 'tipo de registro');
+    await sel('category', dados.categoria, 'categoria');
+    await sel('service_type', dados.servico, 'tipo de serviço');
+    if (dados.obs) setVal(porId('observations'), dados.obs);
+    aviso(falhas.length
+      ? 'Preenchi o que deu, mas falta conferir: ' + falhas.join(', ') + '. Falta também o anexo (PDF da declaração).'
+      : 'Preenchido. Confira, anexe o PDF da declaração e marque "Requerimento isento" se for o caso.', falhas.length > 0);
+  }
+  // Lista com pesquisa do que pedir no E-Protocolo (averbação / anotação): a frase pronta vai nas Observações.
+  const comboAverb = criarCombo($('#eprotAverb'), { vazio: 'nada (pesquise aqui)', aoEscolher: () => {} });
+  comboAverb.definirItens([
+    { valor: '', rotulo: 'nada' },
+    ...['do óbito da contraente', 'do óbito do contraente', 'do divórcio', 'da separação judicial', 'da anulação do casamento', 'da retificação'].map((t) => ({ valor: `averbação ${t}`, rotulo: `averbação ${t}` })),
+    ...['do óbito da contraente', 'do óbito do contraente', 'do divórcio', 'da separação judicial', 'da anulação do casamento', 'do casamento'].map((t) => ({ valor: `anotação ${t}`, rotulo: `anotação ${t}` })),
+  ], 'nada (pesquise aqui)');
+  $('#linkEProt').href ='javascript:' + encodeURIComponent('(' + preencherEProtocolo.toString() + ')()');
+  $('#linkEProt').addEventListener('click', (e) => { e.preventDefault(); alert('Não clique aqui: ARRASTE este botão para a barra de favoritos do Chrome (Ctrl+Shift+B mostra a barra).'); });
+  $('#btnEProt').addEventListener('click', async () => {
+    const { d, erros } = coletar();
+    mostrarErros(erros);
+    const st = $('#eprotStatus');
+    st.hidden = false;
+    if (erros.length) { st.textContent = 'Corrija o que falta acima antes de copiar.'; return; }
+    const cns = comboCartorio.valor;
+    if (!cns || cns === 'outro' || !cidadeAtual) { st.textContent = 'Escolha o cartório que vai emitir a certidão na lista (não vale "Outro cartório"): o E-Protocolo precisa do CNS.'; return; }
+    const dados = {
+      nome: d.req.nome, cpf: d.req.cpf, telefone: '+55(12)99718-6218', email: 'naopossui@gmail.com', uf: selUF.value, cidade: cidadeAtual, cns,
+      tipo: d.livroTipo.startsWith('A') ? 'Nascimento' : d.livroTipo.startsWith('B') ? 'Casamento' : 'Óbito',
+      categoria: 'Certidão', servico: 'Certidão gratuita',
+      // Observações: só o pedido escolhido na lista (vazio se for "nada").
+      obs: comboAverb.valor ? `Prezados, o requerente solicita ${comboAverb.valor} na certidão` : '',
+    };
+    try {
+      await navigator.clipboard.writeText('MINUTAS-EPROTOCOLO:' + JSON.stringify(dados));
+      st.textContent = 'Copiado. Agora abra o E-Protocolo (Novo protocolo) e clique no favorito "Preencher E-Protocolo". Os dados ficam só na área de transferência do seu computador.';
+    } catch (e) { st.textContent = 'O navegador não deixou copiar. Tente de novo.'; }
+  });
+
   // ---------- Proteção contra livro errado: minuta nova zera o tipo de livro ----------
   // Depois de gerar um documento, se o nome do registrado mudar, é outra minuta:
   // o tipo de livro volta para "Selecione" e livro/folha/termo são apagados.

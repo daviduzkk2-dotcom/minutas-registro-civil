@@ -6,7 +6,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Minutas do Registro Civil</title>
-<link rel="stylesheet" href="style.css?v=20261118v">
+<link rel="stylesheet" href="style.css?v=20261117a">
 </head>
 <body>
 <header class="topo">
@@ -162,22 +162,13 @@
     </fieldset>
 
     <!-- LOCAL E DATA -->
-    <div class="secoes-lado">
-      <fieldset class="sec-local">
-        <legend>Local e data</legend>
-        <div class="grade g2">
-          <label>Cidade <input name="localAssinatura" value="CARAGUATATUBA" required></label>
-          <label>Data <input type="date" name="data" id="data" required></label>
-        </div>
-      </fieldset>
-      <fieldset class="sec-eprot">
-        <legend>E-Protocolo</legend>
-        <div class="eprot-copiar">
-          <div class="eprot-averb"><span>Solicitar</span><div class="combo" id="eprotAverb"></div></div>
-          <button type="button" id="btnEProt" class="mini">Copiar para o E-Protocolo</button>
-        </div>
-      </fieldset>
-    </div>
+    <fieldset>
+      <legend>Local e data</legend>
+      <div class="grade g2">
+        <label>Cidade <input name="localAssinatura" value="CARAGUATATUBA" required></label>
+        <label>Data <input type="date" name="data" id="data" required></label>
+      </div>
+    </fieldset>
 
     <div id="erros" class="erros" role="alert" hidden></div>
 
@@ -188,18 +179,6 @@
       <button type="button" id="btnCarimbo" class="sec">Carimbo de cópia (PDF)</button>
       <button type="button" id="btnLimpar" class="perigo">Nova minuta (limpar)</button>
     </div>
-    <p class="aviso" id="eprotStatus" role="status" hidden></p>
-    <details class="eprot-ajuda">
-      <summary>Como instalar o favorito do E-Protocolo</summary>
-      <ol>
-        <li>Uma vez só: mostre a barra de favoritos do Chrome (Ctrl+Shift+B) e <b>arraste</b> este botão para ela:
-          <a id="linkEProt" class="favorito" href="#">Preencher E-Protocolo</a> <small>(versão 20261118e – se o seu favorito tiver outro nome ou versão, apague-o e arraste este)</small></li>
-        <li>Preencha a declaração aqui e clique em <b>Copiar para o E-Protocolo</b>.</li>
-        <li>No E-Protocolo, abra <b>Novo protocolo</b> e clique no favorito. Ele preenche requerente (com o telefone e o e-mail fixos do cartório), cartório destino, tipo de registro, categoria (Certidão), serviço (Certidão gratuita) e observações.</li>
-        <li>Faltam o anexo (baixe o PDF aqui e anexe lá) e, se for o caso, o botão “Requerimento isento”.</li>
-      </ol>
-      <p class="dica">Na primeira vez o Chrome pede permissão para ler a área de transferência: aceite. O site não envia nada ao E-Protocolo; quem preenche é o favorito, no seu navegador.</p>
-    </details>
   </form>
 
   <section id="previa" hidden>
@@ -229,11 +208,11 @@
   </div>
 </template>
 
-<script src="vendor/pdfmake.min.js?v=20261118v"></script>
-<script src="vendor/vfs_fonts.js?v=20261118v"></script>
-<script src="vendor/docx.umd.js?v=20261118v"></script>
-<script src="vendor/pdf-lib.min.js?v=20261118v"></script>
-<script src="app.js?v=20261118v"></script>
-<script src="novas.js?v=20261118v"></script>
+<script src="vendor/pdfmake.min.js?v=20261117a"></script>
+<script src="vendor/vfs_fonts.js?v=20261117a"></script>
+<script src="vendor/docx.umd.js?v=20261117a"></script>
+<script src="vendor/pdf-lib.min.js?v=20261117a"></script>
+<script src="app.js?v=20261117a"></script>
+<script src="novas.js?v=20261117a"></script>
 </body>
 </html>

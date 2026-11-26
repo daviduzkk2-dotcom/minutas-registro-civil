@@ -158,3 +158,7 @@ input:disabled, select:disabled { opacity: .55; }
 .fundamento .trecho { align-items: flex-start; font-size: .85rem; margin: 4px 0; }
 .fundamento .trecho input { margin-top: 3px; }
 @media (max-width: 680px) { .g-busca { grid-template-columns: 1fr; } }
+/* Qualidade do requerente: lista com pesquisa + campo "Outro (escrever)" */
+.campo-qual { font-size: .88rem; color: var(--suave); margin-bottom: 10px; }
+.campo-qual .qual { display: flex; flex-direction: column; gap: 6px; }
+.campo-qual .qual-outra { margin-top: 0; }

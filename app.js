@@ -208,6 +208,35 @@
     abertos.forEach((c) => { if (!e.target.closest('.combo')) c.fechar(); });
   });
 
+  // ---------- Qualidade do requerente: lista com pesquisa + "Outro (escrever)" ----------
+  // O valor final vai para o input oculto `alvo` (o resto do código só lê esse input).
+  const OUTRA = '__outra__';
+  function criarQualidade(raiz, alvo, opcoes) {
+    raiz.innerHTML = '<div class="combo"></div><input class="qual-outra" placeholder="Escreva a qualidade" hidden>';
+    const outra = $('.qual-outra', raiz);
+    const atualizar = () => { alvo.value = combo.valor === OUTRA ? outra.value.trim() : combo.valor; };
+    const combo = criarCombo($('.combo', raiz), {
+      vazio: 'Selecione (pesquise aqui)',
+      aoEscolher: (it) => {
+        outra.hidden = !(it && it.valor === OUTRA);
+        if (!outra.hidden) outra.focus();
+        atualizar();
+        $('.combo-botao', raiz).classList.remove('invalido'); outra.classList.remove('invalido');
+      },
+    });
+    combo.definirItens([...opcoes.map((o) => ({ valor: o, rotulo: o })), { valor: OUTRA, rotulo: 'Outro (escrever)' }]);
+    outra.addEventListener('input', atualizar);
+    return {
+      limpar() { combo.escolherValor(''); outra.value = ''; outra.hidden = true; alvo.value = ''; },
+      marcarInvalido() { (combo.valor === OUTRA ? outra : $('.combo-botao', raiz)).classList.add('invalido'); },
+      get valor() { return alvo.value; },
+    };
+  }
+  const QUAL_POBREZA = ['Registrado(a)', 'Contraente', 'Mãe', 'Pai', 'Filho(a)', 'Cônjuge', 'Companheiro(a)', 'Irmão(ã)',
+    'Neto(a)', 'Bisneto(a)', 'Avô(ó)', 'Sobrinho(a)', 'Tio(a)', 'Herdeiro(a)', 'Procurador(a)', 'Representante legal',
+    'Tutor(a)', 'Curador(a)'];
+  const qualReq = criarQualidade($('#qualReq'), $('[name=reqQualidade]'), QUAL_POBREZA);
+
   // ---------- Cartórios (CNJ – Justiça Aberta) ----------
   let base = null;
   const selUF = $('#uf'), txtDest = $('#destinatario');
@@ -442,6 +471,7 @@
     if (casamento) exigir('registrado2', 'Nome do 2º contraente');
     exigir('destinatario', 'Cartório de destino (destinatário)');
     exigir('reqNome', 'Nome do requerente');
+    if (!d.reqQualidade) { erros.push('Qualidade do requerente'); qualReq.marcarInvalido(); }
     const pessoas = [['req', 'requerente']];
     if (d.modelo === 'testemunhas') {
       exigir('t1Nome', 'Nome da testemunha 1'); exigir('t2Nome', 'Nome da testemunha 2');
@@ -480,7 +510,7 @@
     const linhas = [
       linha(espaco),
       linha(entre),
-      { text: [{ text: rotulo ? `${rotulo}: ` : '', bold: true }, { text: x.nome, bold: true }, x.qualidade ? ` (${x.qualidade})` : ''] },
+      { text: [{ text: rotulo ? `${rotulo}: ` : '', bold: true }, { text: x.nome, bold: true }, x.qualidade ? ` – ${x.qualidade}` : ''] },
     ];
     if (x.cpf || !cpfOpcional) linhas.push({ text: `CPF: ${x.cpf}` });
     linhas.push({ text: `ENDEREÇO: ${enderecoTexto(x)}` });
@@ -630,7 +660,7 @@
       const o = { indent: { left: pt(esquerda), right: pt(larguraTotal - esquerda - largura) }, spacing: { after: 0 } };
       const t = 19;
       const out = [
-        p([run(rotulo ? `${rotulo}: ` : '', { bold: true, size: t }), run(x.nome, { bold: true, size: t }), run(x.qualidade ? ` (${x.qualidade})` : '', { size: t })], o),
+        p([run(rotulo ? `${rotulo}: ` : '', { bold: true, size: t }), run(x.nome, { bold: true, size: t }), run(x.qualidade ? ` – ${x.qualidade}` : '', { size: t })], o),
       ];
       if (x.cpf || !cpfOpcional) out.push(p(run(`CPF: ${x.cpf}`, { size: t }), o));
       out.push(p(run(`ENDEREÇO: ${enderecoTexto(x)}`, { size: t }), o));
@@ -814,6 +844,7 @@
 
   function limparTudo() {
     form.reset();
+    qualReq.limpar();
     form.querySelectorAll('.invalido').forEach((e) => e.classList.remove('invalido'));
     form.querySelectorAll('[data-campo="cepStatus"]').forEach((e) => { e.textContent = ''; });
     ultimoCEP = {};
@@ -995,14 +1026,14 @@
   $('#avisoInatividade').addEventListener('click', () => { $('#avisoInatividade').hidden = true; });
 
   // Ao recarregar, o navegador pode repor valores antigos: começa sempre limpo.
-  window.addEventListener('pageshow', () => { form.reset(); $('#data').value = hojeISO(); atualizarModelo(); atualizarLivro(); atualizarMotivo(true); });
+  window.addEventListener('pageshow', () => { form.reset(); qualReq.limpar(); $('#data').value = hojeISO(); atualizarModelo(); atualizarLivro(); atualizarMotivo(true); });
   atualizarModelo();
   atualizarLivro();
   atualizarMotivo(true);
 
   // ---------- Peças compartilhadas com as minutas novas (novas.js) ----------
   window.MinutasBase = {
-    criarCombo, OUTRO, cpfValido, mascaraCPF, mascaraCEP, dataExtenso, hojeISO, semAcento,
+    criarCombo, criarQualidade, OUTRO, cpfValido, mascaraCPF, mascaraCEP, dataExtenso, hojeISO, semAcento,
     base: () => base,
     quandoCarregarBase(f) { if (base) f(base); else aoCarregarBase.push(f); },
     registrarAba(a) { abasNovas.push(a); },

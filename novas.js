@@ -1353,6 +1353,9 @@
     if (!cortes.length) return [{ rot: '', texto: t }];
     return cortes.map((c, i) => ({ rot: c.rot, texto: t.slice(c.pos, i + 1 < cortes.length ? cortes[i + 1].pos : t.length).trim() }));
   }
+  const QUAL_NOTA = ['Registrado(a)', 'Interessado(a)', 'Apresentante', 'Nubente', 'Declarante', 'Mãe', 'Pai', 'Filho(a)',
+    'Cônjuge', 'Companheiro(a)', 'Irmão(ã)', 'Neto(a)', 'Herdeiro(a)', 'Procurador(a)', 'Advogado(a)', 'Representante legal',
+    'Tutor(a)', 'Curador(a)'];
   function nomeNorma(n) { return (NORMAS && NORMAS.normas[n]) || n; }
   // "conforme o art. 32, § 1º, da Lei nº 6.015/1973 (...)" / "conforme as Normas de Serviço..., item 155.1.1"
   function citacao(it, rots) {
@@ -1410,7 +1413,7 @@
           <label>Documento apresentado <textarea id="notDoc" rows="2" placeholder="ex.: CERTIDÕES DE ASSENTO DE NASCIMENTO DE REGISTROS LAVRADOS NO EXTERIOR"></textarea></label>
           <div class="grade g2">
             <label>Requerente (nome) <input id="notReq"></label>
-            <label>Qualidade do requerente (opcional) <input id="notQual" placeholder="ex.: GENITORA"></label>
+            <div class="campo-qual"><span>Qualidade do requerente</span><div id="notQualBox" class="qual"></div><input type="hidden" id="notQual"></div>
           </div>
           <div class="grade g2">
             <label>Ato pretendido <input id="notAto" placeholder="ex.: Transcrição de nascimento dos filhos"></label>
@@ -1446,6 +1449,7 @@
         </fieldset>`);
       $('#notData').value = B.hojeISO(); $('#notDataAp').value = B.hojeISO();
       const caixa = $('#notExigs');
+      const qual = B.criarQualidade($('#notQualBox'), $('#notQual'), QUAL_NOTA);
       const opcoesNorma = () => `<option value="">Todas as normas</option>` + Object.entries(NORMAS ? NORMAS.normas : {}).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
       function addExig() {
         const d = document.createElement('div');
@@ -1525,7 +1529,7 @@
         $('#notVerif').textContent = j.verificado_em.split('-').reverse().join('/');
         caixa.querySelectorAll('[data-k=filtro]').forEach((f) => { if (f.options.length <= 1) f.innerHTML = opcoesNorma(); });
       }));
-      return { texto, caixa, addExig, numerar, campoChave: $('#notReq'), setRecalc: (f) => { ctxRecalc = f; }, resetFeriados: () => { semExpEditado = false; } };
+      return { texto, caixa, addExig, numerar, qual, campoChave: $('#notReq'), setRecalc: (f) => { ctxRecalc = f; }, resetFeriados: () => { semExpEditado = false; } };
     },
     textoAuto(ctx) {
       const exigs = [...ctx.caixa.children].map((d) => {
@@ -1559,7 +1563,7 @@
       return linhas.join('\n');
     },
     limparExtra(ctx) {
-      ctx.caixa.innerHTML = ''; ctx.addExig();
+      ctx.caixa.innerHTML = ''; ctx.addExig(); ctx.qual.limpar();
       $('#notData').value = B.hojeISO(); $('#notDataAp').value = B.hojeISO(); $('#notLocal').value = 'Caraguatatuba';
       $('#notPrazoBox').hidden = true; ctx.resetFeriados();
     },
@@ -1567,6 +1571,7 @@
       [['#notDoc', 'Documento apresentado'], ['#notReq', 'Requerente'], ['#notAto', 'Ato pretendido'], ['#notDataAp', 'Data da apresentação'], ['#notData', 'Data da nota'], ['#notEsc', 'Nome de quem assina'], ['#notCargo', 'Cargo']].forEach(([s2, r]) => {
         if (!limpo($(s2).value)) { erros.push(r); $(s2).classList.add('invalido'); }
       });
+      if (!ctx.qual.valor) { erros.push('Qualidade do requerente'); ctx.qual.marcarInvalido(); }
       const semFund = [];
       [...ctx.caixa.children].forEach((d, i) => {
         if (!limpo(d.querySelector('[data-k=razao]').value)) { erros.push(`Exigência ${i + 1}: o que foi constatado`); d.querySelector('[data-k=razao]').classList.add('invalido'); }
@@ -1583,7 +1588,7 @@
       const blocos = [
         { p: [R('NOTA DEVOLUTIVA', true)], al: 'c', tam: 12, depois: 14 },
         { p: [R('DOCUMENTO APRESENTADO: ', true), up(limpo($('#notDoc').value))], al: 'j', depois: 8 },
-        { p: [R('Requerente: ', true), req, qual ? ` (${qual})` : ''], al: 'e', depois: 8 },
+        { p: [R('Requerente: ', true), req, qual ? ` – ${qual}` : ''], al: 'e', depois: 8 },
         { p: [R('Ato pretendido: ', true), limpo($('#notAto').value)], al: 'e', depois: 10 },
         { p: [R('RAZÕES DA DEVOLUÇÃO:', true)], al: 'e', depois: 4 },
         ...paragrafosDe(texto, { esqItem: 150, tamItem: 9.5, recuo: 40 }),

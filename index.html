@@ -6,7 +6,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Minutas do Registro Civil</title>
-<link rel="stylesheet" href="style.css?v=20261117a">
+<link rel="stylesheet" href="style.css?v=20261126a">
 </head>
 <body>
 <header class="topo">
@@ -123,14 +123,10 @@
       <legend>Requerente</legend>
       <div class="grade g2">
         <label>Nome completo <input name="reqNome" required></label>
-        <label>Qualidade (opcional)
-          <input name="reqQualidade" list="listaQualidade" placeholder="ex.: registrada, mãe, filho">
-          <datalist id="listaQualidade">
-            <option value="registrado"><option value="registrada"><option value="contraente">
-            <option value="mãe"><option value="pai"><option value="filho"><option value="filha">
-            <option value="cônjuge"><option value="irmão"><option value="irmã"><option value="neto"><option value="neta">
-          </datalist>
-        </label>
+        <div class="campo-qual"><span>Qualidade</span>
+          <div id="qualReq" class="qual"></div>
+          <input type="hidden" name="reqQualidade">
+        </div>
       </div>
       <div class="endereco" data-pessoa="req"></div>
     </fieldset>
@@ -208,11 +204,11 @@
   </div>
 </template>
 
-<script src="vendor/pdfmake.min.js?v=20261117a"></script>
-<script src="vendor/vfs_fonts.js?v=20261117a"></script>
-<script src="vendor/docx.umd.js?v=20261117a"></script>
-<script src="vendor/pdf-lib.min.js?v=20261117a"></script>
-<script src="app.js?v=20261117a"></script>
-<script src="novas.js?v=20261117a"></script>
+<script src="vendor/pdfmake.min.js?v=20261126a"></script>
+<script src="vendor/vfs_fonts.js?v=20261126a"></script>
+<script src="vendor/docx.umd.js?v=20261126a"></script>
+<script src="vendor/pdf-lib.min.js?v=20261126a"></script>
+<script src="app.js?v=20261126a"></script>
+<script src="novas.js?v=20261126a"></script>
 </body>
 </html>

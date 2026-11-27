@@ -85,6 +85,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--acento); ou
 .g-end1 { grid-template-columns: 1.3fr 1fr .7fr 1fr; }
 .g-end2 { grid-template-columns: 2fr 1.3fr 1.3fr .5fr; }
 .opcoes { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 10px; }
+.opcoes-col { display: grid; gap: 8px; margin-bottom: 10px; }
+.opcao select { width: auto; }
 .opcao { display: flex; align-items: center; gap: 8px; color: var(--texto); font-size: .95rem; margin: 0; }
 .opcao input { width: auto; margin: 0; }
 .dica { display: block; color: var(--suave); font-size: .8rem; margin-top: 3px; min-height: 1em; }

@@ -329,16 +329,23 @@
       if (b.espaco) return { text: '', margin: [0, b.espaco, 0, 0] };
       if (b.ass) return assin(b.ass);
       if (b.lado) return { columns: b.lado.map(assin), columnGap: 20, unbreakable: true };
+      // item numerado com recuo deslocado ("1." à esquerda e o texto alinhado depois)
+      if (b.item) return {
+        columns: [{ width: b.recItem || 18, text: b.item }, { width: '*', text: runs(b.p, b.neg), alignment: 'justify' }],
+        columnGap: 0, fontSize: b.tam || 10.5, lineHeight: b.lh || 1.15, margin: [b.esqBloco || 0, b.antes || 0, 0, b.depois == null ? 4 : b.depois],
+      };
       return {
         text: runs(b.p, b.neg), alignment: { j: 'justify', c: 'center', e: 'left', d: 'right' }[b.al || 'j'],
         leadingIndent: b.ind || 0, margin: [b.esqBloco || 0, b.antes || 0, 0, b.depois == null ? 4 : b.depois], fontSize: b.tam || 10.5,
         lineHeight: b.lh || 1.15,
       };
     };
+    const M = opts.margens || MARGENS;
     const doc = {
-      pageSize: 'A4', pageMargins: [MARGENS.esq, MARGENS.cima, MARGENS.dir, MARGENS.baixo],
+      pageSize: 'A4', pageMargins: [M.esq, M.cima, M.dir, M.baixo],
       info: { title: titulo, creator: 'Minutas do Registro Civil' },
-      defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.2 }, content: blocos.map(render),
+      defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.2 },
+      content: blocos.map((b) => { const r = render(b); if (b.novaPagina) r.pageBreak = 'before'; return r; }),
     };
     if (opts.timbrado && TIMB) {
       // mesmo papel timbrado da declaração de pobreza
@@ -381,20 +388,32 @@
         ...(a.linhas || []).map((l) => new Paragraph({ children: runs(l, tam - 0.5), spacing: { after: 0 }, alignment: al })),
       ];
     };
+    const M = opts.margens || MARGENS;
+    const UTIL = opts.margens ? 595.3 - M.esq - M.dir : LARG_UTIL; // largura útil (pt)
     const filhos = [];
     const lista = [];
     blocos.forEach((b) => { if (b.grupo) lista.push(...b.grupo); else lista.push(b); });
     lista.forEach((b) => {
       if (b.espaco) { filhos.push(new Paragraph({ children: [], spacing: { before: pt(b.espaco), after: 0 } })); return; }
-      if (b.ass) { filhos.push(...assin(b.ass, LARG_UTIL)); return; }
+      if (b.ass) { filhos.push(...assin(b.ass, UTIL)); return; }
+      if (b.item) {
+        const tam = b.tam || 10.5, rec = b.recItem || 18;
+        filhos.push(new Paragraph({
+          children: [new TextRun({ text: b.item, font: F, size: Math.round(tam * 2) }), new TextRun({ children: [new X.Tab()], font: F, size: Math.round(tam * 2) }), ...runs(b.p, tam, b.neg)],
+          alignment: AlignmentType.JUSTIFIED, indent: { left: pt((b.esqBloco || 0) + rec), hanging: pt(rec) },
+          spacing: { before: pt(b.antes || 0), after: pt(b.depois == null ? 4 : b.depois), line: Math.round((b.lh || 1.15) * 240) },
+          pageBreakBefore: !!b.novaPagina,
+        }));
+        return;
+      }
       if (b.lado) {
-        const col = (LARG_UTIL - 20) / 2;
+        const col = (UTIL - 20) / 2;
         filhos.push(new Table({
-          width: { size: pt(LARG_UTIL), type: WidthType.DXA }, columnWidths: [pt(col + 20), pt(col)], layout: TableLayoutType.FIXED, borders: sem,
+          width: { size: pt(UTIL), type: WidthType.DXA }, columnWidths: [pt(col + 20), pt(col)], layout: TableLayoutType.FIXED, borders: sem,
           rows: [new TableRow({ cantSplit: true, children: b.lado.map((a, i) => new TableCell({
             width: { size: pt(i === 0 ? col + 20 : col), type: WidthType.DXA }, borders: sem,
             margins: { left: 0, right: pt(i === 0 ? 20 : 0), top: 0, bottom: 0 },
-            children: assin(Object.assign({}, a, { centro: false, larg: Math.min(a.larg || col, col) }), col),
+            children: assin(Object.assign({}, a, { centro: !!b.centro, larg: Math.min(a.larg || col, col) }), col),
           })) })],
         }));
         return;
@@ -404,9 +423,10 @@
         children: runs(b.p, tam, b.neg), alignment: AL[b.al || 'j'],
         indent: { firstLine: pt(b.ind || 0), left: pt(b.esqBloco || 0) },
         spacing: { before: pt(b.antes || 0), after: pt(b.depois == null ? 4 : b.depois), line: Math.round((b.lh || 1.15) * 240) },
+        pageBreakBefore: !!b.novaPagina,
       }));
     });
-    const secao = { properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: pt(MARGENS.cima), bottom: pt(MARGENS.baixo), left: pt(MARGENS.esq), right: pt(MARGENS.dir) } } }, children: filhos };
+    const secao = { properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: pt(M.cima), bottom: pt(M.baixo), left: pt(M.esq), right: pt(M.dir) } } }, children: filhos };
     if (opts.timbrado && TIMB) {
       const { Header, Footer, ImageRun, VerticalAlign } = X;
       const LARG = LARG_UTIL;
@@ -464,7 +484,7 @@
   }
   async function entregar(acao, r) {
     NOMES = r.nomes || [];
-    const opts = { timbrado: !!r.timbrado };
+    const opts = { timbrado: !!r.timbrado, margens: r.margens };
     if (opts.timbrado) await carregarTimbrado();
     if (acao === 'word') {
       const blob = await window.docx.Packer.toBlob(wordDoc(r.titulo, r.blocos, opts));
@@ -1601,5 +1621,285 @@
   // recalcula o texto quando muda o trecho escolhido ou remove exigência
   nota.setRecalc(() => nota.recalcular && nota.recalcular());
 
-  window.MinutasNovas = { ret, pre, sob, nota }; // para testes no navegador
+  // =====================================================================
+  // 5) RECONHECIMENTO DE FILIAÇÃO SOCIOAFETIVA (Prov. CNJ 63/2017, Seção II) – termo (Anexo II) + atestado
+  //    Maior de 18: sem os pais registrais. De 12 a 17: o reconhecido assina e os pais registrais também.
+  //    Menor de 12: não pode ser feito no cartório (Prov. CNJ 83/2019).
+  // =====================================================================
+  // idade completa numa data (ISO), para conferir no dia do termo
+  function idadeEm(nasc, ref) {
+    if (!nasc || !ref) return null;
+    const [a, m, d] = nasc.split('-').map(Number), [ra, rm, rd] = ref.split('-').map(Number);
+    let i = ra - a;
+    if (rm < m || (rm === m && rd < d)) i--;
+    return i;
+  }
+  // diferença mínima de 16 anos: o reconhecido tem de ter nascido no dia em que quem reconhece fez 16 anos ou depois
+  function diferenca16(nascR, nascD) {
+    if (!nascR || !nascD) return null;
+    const [a, m, d] = nascR.split('-');
+    return nascD >= `${+a + 16}-${m}-${d}`;
+  }
+  const mascaraTel = (v) => {
+    const d = v.replace(/\D/g, '').slice(0, 11);
+    if (d.length <= 2) return d ? `(${d}` : '';
+    const n = d.slice(2);
+    return `(${d.slice(0, 2)}) ${n.length > 8 ? `${n.slice(0, 5)}-${n.slice(5)}` : n.length > 4 ? `${n.slice(0, 4)}-${n.slice(4)}` : n}`;
+  };
+  // "Rua X, nº 111, Bairro, Cidade/UF" (formato do roteiro do termo)
+  function enderecoSocio(x) {
+    if (!x.logradouro) return '';
+    const n = x.numero ? (/^\d/.test(x.numero) ? `nº ${x.numero}` : x.numero) : '';
+    const cid = x.cidade ? `${x.cidade}${x.uf ? `/${x.uf}` : ''}` : '';
+    return [x.logradouro, n, x.complemento, x.bairro, cid].filter(Boolean).join(', ');
+  }
+  // Qualificação na ordem do modelo: nacionalidade, naturalidade, nascimento, estado civil, profissão, RG, CPF, endereço...
+  function qualSocio(x, { telefone = true, registro = '' } = {}) {
+    const g = (m, f) => gx(x.sexo, m, f);
+    const ec = estadoCivilTexto(x.estadoCivil, x.sexo);
+    const filiacao = [x.pai, x.mae].filter(Boolean).join(' e ');
+    return [
+      x.nacionalidade && `nacionalidade ${x.nacionalidade}`,
+      x.naturalidade && `natural de ${x.naturalidade}`,
+      x.nascimento && `${g('nascido', 'nascida')} aos ${dataBR(x.nascimento)}`,
+      ec && `estado civil ${ec}`,
+      x.profissao,
+      x.rg && `${g('portador', 'portadora')} do RG nº ${x.rg}${x.rgOrgao ? ` ${x.rgOrgao}` : ''}`,
+      x.cpf && `${g('inscrito', 'inscrita')} no CPF/MF sob o nº ${x.cpf}`,
+      enderecoSocio(x) && `${g('residente e domiciliado', 'residente e domiciliada')} à ${enderecoSocio(x)}`,
+      telefone && x.telefone && `telefone ${x.telefone}`,
+      registro,
+      filiacao && `${g('filho', 'filha')} de ${filiacao}`,
+    ].filter(Boolean).join(', ');
+  }
+  // Matrícula nacional (Prov. CNJ 149/2023, art. 473): CNS(6) acervo(2) 55 ano(4) tipo(1) livro(5) folha(3) termo(7) DV(2)
+  function lerMatricula(txt) {
+    const d = (txt || '').replace(/\D/g, '');
+    if (!d) return null;
+    if (d.length !== 32) return { erro: `a matrícula tem ${d.length} dígitos (o certo são 32)` };
+    const m = { d, cns: d.slice(0, 6), servico: d.slice(8, 10), ano: d.slice(10, 14), tipo: d[14],
+      livro: String(+d.slice(15, 20)), folha: String(+d.slice(20, 23)), termo: String(+d.slice(23, 30)) };
+    m.formatada = [d.slice(0, 6), d.slice(6, 8), d.slice(8, 10), d.slice(10, 14), d[14], d.slice(15, 20), d.slice(20, 23), d.slice(23, 30), d.slice(30)].join(' ');
+    m.cnsFmt = `${d.slice(0, 5)}-${d[5]}`;
+    if (m.servico !== '55') m.erro = `os dígitos 9 e 10 da matrícula são ${m.servico} (no registro civil é 55)`;
+    else if (m.tipo !== '1') m.erro = `o tipo de livro na matrícula é ${m.tipo}: o reconhecimento usa o registro de nascimento (tipo 1 = Livro A)`;
+    return m;
+  }
+  let cnsMapa = null;
+  function cartorioPorCns(cns) {
+    const base = B.base(); if (!base) return null;
+    if (!cnsMapa) {
+      cnsMapa = {};
+      Object.entries(base.uf).forEach(([uf, cids]) => Object.entries(cids).forEach(([cid, lista]) => lista.forEach(([c, resumo, nome]) => {
+        cnsMapa[c] = { uf, cidade: cid, resumo, nome, varios: lista.length > 1 };
+      })));
+    }
+    return cnsMapa[cns] || null;
+  }
+  const PARTICULAS = ['DE', 'DA', 'DO', 'DAS', 'DOS', 'E', "D'"];
+  // sobrenomes do nome atual que não aparecem no nome novo
+  function sobrenomesTirados(atual, novo) {
+    const tn = new Set(up(novo).split(/\s+/));
+    return up(atual).split(/\s+/).slice(1).filter((p) => p && !PARTICULAS.includes(p) && !tn.has(p));
+  }
+  const MARGENS_SOCIO = { esq: 85, dir: 71, cima: 57, baixo: 35 }; // 3 cm, 2,5 cm, 2 cm, 1,25 cm (como o modelo do cartório)
+
+  const soc = criarAba({
+    nome: 'socioafetivo', raiz: $('#abaSocio'), id: 'soc',
+    montar(raiz) {
+      raiz.insertAdjacentHTML('beforeend', `
+        <p class="aviso">Termo do Anexo II e atestado de vínculo (Provimento CNJ nº 63/2017, Seção II). Diferença mínima de 16 anos entre quem reconhece e o(a) reconhecido(a);
+          quem reconhece precisa ser maior de 18 anos e não pode ser ascendente nem irmão(ã) do(a) reconhecido(a).
+          Reconhecido(a) <b>maior de 18</b>: assina sozinho(a). <b>De 12 a 17 anos</b>: assina e os pais registrais também assinam. <b>Menor de 12</b>: não pode ser feito no cartório (Provimento CNJ nº 83/2019).</p>
+        <p class="aviso" id="socSit" role="status" hidden></p>
+        <fieldset><legend>Quem reconhece</legend><div id="socRec"></div></fieldset>
+        <fieldset><legend>Reconhecido(a)</legend>
+          <p class="dica">Pai e mãe: copie como estão no registro de nascimento (pais registrais). Se só houver mãe (ou só pai), deixe o outro em branco.
+            Menor de 18: profissão, RG e CPF podem ficar em branco se não tiver.</p>
+          <div class="acoes-crc"><button type="button" class="sec mini" id="socMesmoEnd">Mesmo endereço de quem reconhece</button></div>
+          <div id="socRecd"></div>
+        </fieldset>
+        <fieldset><legend>Registro de nascimento do(a) reconhecido(a)</legend>
+          <label>Matrícula (32 números, da certidão) <input id="socMat" inputmode="numeric" placeholder="000000 00 55 0000 1 00000 000 0000000 00"></label>
+          <p class="dica" id="socMatSt"></p>
+          <label>Cartório do registro (como sai no texto – confira) <input id="socCart" placeholder="Registro Civil das Pessoas Naturais de Cidade/UF"></label>
+          <div class="grade g4">
+            <label>CNS <input id="socCns" placeholder="00000-0"></label>
+            <label>Livro A nº <input id="socLivro" inputmode="numeric"></label>
+            <label>Folha <input id="socFolha" inputmode="numeric"></label>
+            <label>Termo nº <input id="socTermo" inputmode="numeric"></label>
+          </div>
+        </fieldset>
+        <fieldset><legend>Nome depois do reconhecimento</legend>
+          <label>Nome que o(a) reconhecido(a) vai passar a usar <input id="socNovo"></label>
+          <p class="erros" id="socNovoAviso" hidden></p>
+        </fieldset>
+        <fieldset><legend>Provas do vínculo (saem no atestado)</legend>
+          <div class="opcoes-col">
+            <label class="opcao"><input type="checkbox" data-prova="nasc" checked> Certidão de nascimento do(a) reconhecido(a)</label>
+            <label class="opcao"><input type="checkbox" data-prova="cas"> Certidão de casamento / união estável de quem reconhece com
+              <select id="socCasCom"><option value="mae" selected>a mãe registral</option><option value="pai">o pai registral</option></select></label>
+            <label class="opcao"><input type="checkbox" data-prova="test" checked> Declaração de duas testemunhas</label>
+            <label class="opcao"><input type="checkbox" data-prova="fotos" checked> Fotos do(a) reconhecido(a) com quem reconhece</label>
+            <label class="opcao"><input type="checkbox" data-prova="resid"> Comprovante de residência em comum</label>
+            <label class="opcao"><input type="checkbox" data-prova="docs" checked> Documentos de identificação das partes</label>
+          </div>
+          <label>Outras provas (separe por ponto e vírgula) <input id="socOutras" placeholder="ex.: declaração da escola; plano de saúde como dependente"></label>
+        </fieldset>
+        <fieldset><legend>Data e escrevente</legend>
+          <div class="grade g-cert">
+            <label>Data do termo <input type="date" id="socData"></label>
+            <label>Escrevente <input id="socEsc"></label>
+            <label>Cargo <select id="socCargo">${CARGOS.map((c) => `<option${c === 'Escrevente' ? ' selected' : ''}>${c}</option>`).join('')}</select></label>
+          </div>
+          <p class="dica">O SELO sai em branco: o cartório coloca no final. Sai em Caraguatatuba/SP, com a data por extenso.</p>
+        </fieldset>`);
+      const rec = blocoPessoa($('#socRec'), 'socR', {});
+      const recd = blocoPessoa($('#socRecd'), 'socD', { telefone: false });
+      const tel = rec.el('telefone');
+      tel.addEventListener('input', () => { tel.value = mascaraTel(tel.value); });
+      $('#socData').value = B.hojeISO();
+      $('#socMesmoEnd').addEventListener('click', () => {
+        ['cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'uf'].forEach((c) => { recd.el(c).value = rec.el(c).value; });
+        recd.el('cep').dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      // matrícula → CNS, livro, folha, termo e cartório (pela lista do CNJ)
+      let cartAuto = '';
+      const matSt = $('#socMatSt');
+      function lerMat() {
+        const m = lerMatricula($('#socMat').value);
+        $('#socMat').classList.remove('invalido');
+        if (!m) { matSt.textContent = ''; return; }
+        if (m.erro && !m.formatada) { matSt.textContent = `Confira: ${m.erro}.`; return; }
+        $('#socMat').value = m.formatada;
+        if (m.erro) { matSt.textContent = `Confira: ${m.erro}.`; $('#socMat').classList.add('invalido'); return; }
+        $('#socCns').value = m.cnsFmt; $('#socLivro').value = m.livro; $('#socFolha').value = m.folha; $('#socTermo').value = m.termo;
+        const c = cartorioPorCns(m.cns);
+        if (c) {
+          const txt = `Registro Civil das Pessoas Naturais de ${c.cidade}/${c.uf}${c.varios ? ` – ${c.resumo || c.nome}` : ''}`;
+          if (!limpo($('#socCart').value) || $('#socCart').value === cartAuto) $('#socCart').value = txt;
+          cartAuto = txt;
+          matSt.textContent = `Registro de ${m.ano}, Livro A-${m.livro}, fls. ${m.folha}, termo ${m.termo}. Cartório achado pelo CNS na lista do CNJ: ${c.nome} (${c.cidade}/${c.uf}). Confira na certidão.`;
+        } else matSt.textContent = `Registro de ${m.ano}, Livro A-${m.livro}, fls. ${m.folha}, termo ${m.termo}. O CNS ${m.cnsFmt} não está na lista do CNJ: escreva o cartório à mão, conferindo na certidão.`;
+      }
+      $('#socMat').addEventListener('change', lerMat);
+      $('#socMat').addEventListener('paste', () => setTimeout(lerMat, 0));
+      // situação (idades) e aviso do nome
+      function situacao() {
+        const r = rec.ler(), d = recd.ler(), ref = $('#socData').value;
+        const iR = idadeEm(r.nascimento, ref), iD = idadeEm(d.nascimento, ref), dif = diferenca16(r.nascimento, d.nascimento);
+        const st = $('#socSit'), linhas = [];
+        if (iD !== null) {
+          if (iD < 12) linhas.push(`<b>Reconhecido(a) com ${iD} anos: menor de 12 não pode ser feito no cartório (Provimento CNJ nº 83/2019).</b>`);
+          else if (iD < 18) {
+            const pais = [d.pai && 'do pai registral', d.mae && 'da mãe registral'].filter(Boolean).join(' e ') || 'dos pais registrais (preencha a filiação)';
+            linhas.push(`Reconhecido(a) com ${iD} anos (de 12 a 17): assina o termo e sai também a assinatura ${pais}.`);
+          }
+          else linhas.push(`Reconhecido(a) com ${iD} anos (maior): sem as assinaturas dos pais registrais.`);
+        }
+        if (iR !== null && iR < 18) linhas.push(`<b>Quem reconhece tem ${iR} anos: precisa ser maior de 18.</b>`);
+        if (dif === false) linhas.push('<b>A diferença de idade é menor que 16 anos: não pode ser feito.</b>');
+        st.innerHTML = linhas.join('<br>'); st.hidden = !linhas.length;
+        const novo = up(limpo($('#socNovo').value)), tir = novo && d.nome ? sobrenomesTirados(d.nome, novo) : [];
+        const av = $('#socNovoAviso');
+        av.textContent = tir.length ? `Atenção: o nome novo tira ${tir.length > 1 ? 'os sobrenomes' : 'o sobrenome'} ${tir.join(', ')} do nome atual. Confirme se é isso mesmo.` : '';
+        av.hidden = !tir.length;
+      }
+      raiz.addEventListener('change', situacao);
+      raiz.addEventListener('input', (e) => { if (e.target.id === 'socNovo') situacao(); });
+      return { rec, recd, situacao, limparMat: () => { cartAuto = ''; matSt.textContent = ''; } };
+    },
+    limparExtra(ctx) {
+      ctx.rec.limpar(); ctx.recd.limpar(); ctx.limparMat();
+      $('#socData').value = B.hojeISO();
+      $('#socSit').hidden = true; $('#socNovoAviso').hidden = true;
+    },
+    gerar(ctx, erros) {
+      const r = ctx.rec.ler(), d = ctx.recd.ler(), ref = $('#socData').value;
+      ctx.rec.validar(erros, 'Quem reconhece', ['nome', 'sexo', 'nacionalidade', 'naturalidade', 'nascimento', 'estadoCivil', 'profissao', 'rg', 'cpf', 'logradouro', 'numero', 'bairro', 'cidade', 'uf', 'telefone']);
+      if (!r.pai && !r.mae) { erros.push('Quem reconhece: filiação (pai e/ou mãe)'); ctx.rec.el('mae').classList.add('invalido'); }
+      const iD = idadeEm(d.nascimento, ref), iR = idadeEm(r.nascimento, ref);
+      const menor = iD !== null && iD < 18;
+      ctx.recd.validar(erros, 'Reconhecido(a)', ['nome', 'sexo', 'nacionalidade', 'naturalidade', 'nascimento', 'estadoCivil', 'logradouro', 'numero', 'bairro', 'cidade', 'uf'].concat(menor ? [] : ['profissao', 'rg', 'cpf']));
+      if (!d.pai && !d.mae) { erros.push('Reconhecido(a): filiação do registro (pai e/ou mãe)'); ctx.recd.el('mae').classList.add('invalido'); }
+      if (iD !== null && iD < 12) erros.push(`Reconhecido(a) com ${iD} anos: menor de 12 anos não pode ser reconhecido(a) no cartório (Provimento CNJ nº 83/2019)`);
+      if (iR !== null && iR < 18) erros.push(`Quem reconhece tem ${iR} anos: precisa ser maior de 18`);
+      if (diferenca16(r.nascimento, d.nascimento) === false) erros.push('A diferença de idade entre quem reconhece e o(a) reconhecido(a) é menor que 16 anos');
+      if (r.nome && (r.nome === d.pai || r.nome === d.mae)) erros.push('Quem reconhece já consta como pai/mãe no registro do(a) reconhecido(a)');
+      if (r.nome && r.nome === d.nome) erros.push('Quem reconhece e o(a) reconhecido(a) estão com o mesmo nome');
+      const mat = lerMatricula($('#socMat').value);
+      if (mat && mat.erro) { erros.push(`Matrícula: ${mat.erro}`); $('#socMat').classList.add('invalido'); }
+      [['#socCart', 'Cartório do registro'], ['#socLivro', 'Livro A nº'], ['#socFolha', 'Folha'], ['#socTermo', 'Termo nº'], ['#socNovo', 'Nome que vai passar a usar'], ['#socData', 'Data do termo'], ['#socEsc', 'Escrevente']].forEach(([s, rt]) => {
+        if (!limpo($(s).value)) { erros.push(rt); $(s).classList.add('invalido'); }
+      });
+      const cns = limpo($('#socCns').value);
+      if (cns && !/^\d{5}-\d$/.test(cns)) { erros.push('CNS: use o formato 00000-0'); $('#socCns').classList.add('invalido'); }
+      const gR = (m, f) => gx(r.sexo, m, f), gD = (m, f) => gx(d.sexo, m, f);
+      const fotosCom = gR('o pai socioafetivo', 'a mãe socioafetiva');
+      const PROVAS = {
+        nasc: `certidão de nascimento ${gD('do reconhecido', 'da reconhecida')}`,
+        cas: `certidão de casamento ou de união estável de quem reconhece com ${$('#socCasCom').value === 'pai' ? 'o pai' : 'a mãe'} ${gD('do reconhecido', 'da reconhecida')}`,
+        test: 'declaração de duas testemunhas',
+        fotos: `fotos ${gD('do reconhecido', 'da reconhecida')} com ${fotosCom}`,
+        resid: 'comprovante de residência em comum',
+        docs: 'documentos de identificação das partes',
+      };
+      const provas = $$('[data-prova]', $('#abaSocio')).filter((c) => c.checked).map((c) => PROVAS[c.dataset.prova])
+        .concat(limpo($('#socOutras').value).split(';').map(limpo).filter(Boolean));
+      if (!provas.length) erros.push('Provas do vínculo: marque ou escreva pelo menos uma');
+      if (erros.length) return null;
+      const novo = up(limpo($('#socNovo').value));
+      const tir = sobrenomesTirados(d.nome, novo);
+      if (tir.length && !confirm(`O nome novo (${novo}) tira ${tir.join(', ')} do nome atual (${d.nome}). Gerar assim mesmo?`)) {
+        erros.push('Confira o nome que vai passar a usar'); $('#socNovo').classList.add('invalido'); return null;
+      }
+      const escNome = limpo($('#socEsc').value), cargo = $('#socCargo').value;
+      const dataTxt = `Caraguatatuba/SP, ${B.dataExtenso(ref)}.`;
+      const registro = `${gD('registrado', 'registrada')} no ${limpo($('#socCart').value)}${cns ? ` (CNS ${cns})` : ''}, Livro A-${limpo($('#socLivro').value)}, fls. ${limpo($('#socFolha').value)}, termo nº ${limpo($('#socTermo').value)}${mat ? `, matrícula nº ${mat.formatada}` : ''}`;
+      const T = 9;
+      const ass = (nome, papel, antes) => ({ ass: { nome: [R(nome, true)], linhas: [[papel]], larg: 250, centro: true, antes, tam: T + 0.5 } });
+      const it = (n, t) => ({ item: `${n}.`, p: [t], tam: T, depois: 2, lh: 1.1 });
+      const recon = gD('o reconhecido', 'a reconhecida'), dRec = gD('do reconhecido', 'da reconhecida');
+      const filhoRec = gD('o filho reconhecido', 'a filha reconhecida');
+      const assinaturas = [ass(r.nome, 'Pessoa que reconhece', 22), ass(d.nome, gD('Reconhecido', 'Reconhecida'), 18)];
+      if (menor) {
+        // pai e mãe registrais lado a lado, para o termo caber inteiro na página 1
+        if (d.pai && d.mae) assinaturas.push({ lado: [ass(d.pai, 'Pai registral', 18).ass, ass(d.mae, 'Mãe registral', 18).ass].map((a) => Object.assign(a, { larg: 200 })), centro: true });
+        else if (d.pai) assinaturas.push(ass(d.pai, 'Pai registral', 18));
+        else if (d.mae) assinaturas.push(ass(d.mae, 'Mãe registral', 18));
+      }
+      assinaturas.push(ass(escNome, cargo, 18));
+      const blocos = [
+        { p: [R('ANEXO II', true)], al: 'e', tam: T, depois: 0 },
+        { p: [R('TERMO DE RECONHECIMENTO DE FILIAÇÃO SOCIOAFETIVA', true)], al: 'c', tam: 11, antes: 6, depois: 0 },
+        { p: [R('Registro Civil das Pessoas Naturais de CARAGUATATUBA/SP', true)], al: 'c', tam: T, depois: 12 },
+        { p: [R('QUEM RECONHECE:', true)], tam: T, depois: 4 },
+        { p: [R(r.nome, true), `, ${qualSocio(r)}.`], tam: T, depois: 10, lh: 1.1 },
+        { p: [R(gD('RECONHECIDO:', 'RECONHECIDA:'), true)], tam: T, depois: 4 },
+        { p: [R(d.nome, true), `, ${qualSocio(d, { telefone: false, registro })}.`], tam: T, depois: 10, lh: 1.1 },
+        { p: [`${gD('O reconhecido', 'A reconhecida')} passará a usar o nome: `, R(novo, true), '.'], tam: T, depois: 10 },
+        { p: [R('Declaração da pessoa que realiza o reconhecimento: DECLARO, sob as penas da lei, que:', true)], tam: T, depois: 4 },
+        it(1, `A filiação socioafetiva ora afirmada é verdadeira e RECONHEÇO, nos termos da Seção II do Provimento nº 63/2017 do Conselho Nacional de Justiça, ${gD('meu filho SOCIOAFETIVO acima identificado', 'minha filha SOCIOAFETIVA acima identificada')};`),
+        it(2, `Não há discussão judicial sobre o reconhecimento da ${gR('paternidade', 'maternidade')} ${dRec}, nem procedimento de adoção em andamento;`),
+        it(3, `Não sou ascendente nem ${gR('irmão', 'irmã')} ${dRec}, inexistindo vínculo de parentesco biológico nessas linhas;`),
+        it(4, `Possuo diferença de idade de, no mínimo, 16 (dezesseis) anos em relação ${gD('ao filho reconhecido', 'à filha reconhecida')};`),
+        it(5, `Tenho conhecimento de que ${filhoRec} passará a ter todos os direitos legais de ${gD('filho', 'filha')}, inclusive os sucessórios, em igualdade com os filhos biológicos ou adotivos, sem distinção;`),
+        it(6, 'Tenho ciência de que o reconhecimento é irrevogável, nos termos do art. 1.610 do Código Civil, somente podendo ser desconstituído pela via judicial, nas hipóteses de vício de vontade, fraude ou simulação.'),
+        { p: ['Por ser expressão da verdade, firmo o presente termo.'], al: 'c', tam: T, antes: 8, depois: 0 },
+        { p: ['Certifico ainda que os documentos apresentados pelos declarantes são originais.'], al: 'c', tam: T, depois: 0 },
+        { p: [dataTxt], al: 'c', tam: T, antes: 6, depois: 0 },
+        ...assinaturas,
+        { p: [R('SELO:', true)], al: 'c', tam: 10, antes: 12, depois: 0 },
+        // página 2: atestado
+        { p: [R('ATESTADO DE EXISTÊNCIA DE VÍNCULO SOCIOAFETIVO', true)], al: 'c', tam: 11, depois: 24, novaPagina: true },
+        { p: [`Atesto a existência de vínculo socioafetivo estável e exteriorizado socialmente entre ${r.nome} e ${d.nome}, diante das provas apresentadas neste serviço, a saber: ${provas.join('; ')}, que demonstram a relação entre ${gR('pai', 'mãe')} e ${gD('filho', 'filha')}, indicando assim a existência de relação sólida, nos termos do art. 10-A do Provimento nº 63/2017 do Conselho Nacional de Justiça.`], tam: 11, lh: 1.25, depois: 18 },
+        { p: [dataTxt], al: 'c', tam: 11, depois: 0 },
+        { ass: { nome: [R(escNome, true)], linhas: [[cargo]], larg: 250, centro: true, antes: 48, tam: 11.5 } },
+      ];
+      const arquivo = 'socioafetivo_' + d.nome.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_');
+      return { titulo: 'Termo de reconhecimento de filiação socioafetiva', arquivo, chave: d.nome, nomes: [], margens: MARGENS_SOCIO, blocos };
+    },
+  });
+
+  window.MinutasNovas = { ret, pre, sob, nota, soc }; // para testes no navegador
 })();
